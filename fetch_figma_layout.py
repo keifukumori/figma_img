@@ -12,6 +12,7 @@ FILE_KEY = os.getenv("FILE_KEY")
 FRAME_NODE_ID = os.getenv("FRAME_NODE_ID")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "figma_layout")
 SP_FRAME_NODE_ID = os.getenv("SP_FRAME_NODE_ID", None)  # SP版フレームID（オプション）
+SAVE_RAW_DATA = os.getenv("SAVE_RAW_DATA", "false").lower() == "true"  # JSONバックアップの有効/無効
 
 if not all([FIGMA_API_TOKEN, FILE_KEY, FRAME_NODE_ID]):
     raise ValueError("APIトークン、ファイルキー、フレームIDを .env に設定してください。")
@@ -30,27 +31,31 @@ resp = requests.get(file_url, headers=headers)
 resp.raise_for_status()
 file_data = resp.json()
 
-# 生データの保存（JSON形式）
-raw_data_dir = os.path.join(OUTPUT_DIR, "raw_figma_data")
-os.makedirs(raw_data_dir, exist_ok=True)
+# 生データの保存（設定に応じて）
+if SAVE_RAW_DATA:
+    raw_data_dir = os.path.join(OUTPUT_DIR, "raw_figma_data")
+    os.makedirs(raw_data_dir, exist_ok=True)
 
-# ファイル名にタイムスタンプを付与
-from datetime import datetime
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-project_name_safe = sanitize_filename(file_data.get("name", "Unknown_Project"))
+    # ファイル名にタイムスタンプを付与
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    project_name_safe = sanitize_filename(file_data.get("name", "Unknown_Project"))
 
-raw_data_file = os.path.join(raw_data_dir, f"{project_name_safe}_{FILE_KEY}_{timestamp}.json")
+    raw_data_file = os.path.join(raw_data_dir, f"{project_name_safe}_{FILE_KEY}_{timestamp}.json")
 
-with open(raw_data_file, "w", encoding="utf-8") as f:
-    json.dump(file_data, f, ensure_ascii=False, indent=2)
+    with open(raw_data_file, "w", encoding="utf-8") as f:
+        json.dump(file_data, f, ensure_ascii=False, indent=2)
 
-print(f"[LOG] Raw Figma data saved: {raw_data_file}")
-print(f"[LOG] Raw data size: {len(json.dumps(file_data))} characters")
+    print(f"[LOG] Raw Figma data saved: {raw_data_file}")
+    print(f"[LOG] Raw data size: {len(json.dumps(file_data))} characters")
+else:
+    print(f"[LOG] JSONバックアップはスキップ（SAVE_RAW_DATA=false）")
+    print(f"[LOG] データサイズ: {len(json.dumps(file_data))} characters")
 
 # ---------------- Figmaスタイル情報の抽出 ----------------
-def extract_figma_styles(file_data):
+def extract_figma_styles(file_info):
     """Figmaファイルからスタイル情報を抽出"""
-    styles = file_data.get("styles", {})
+    styles = file_info.get("styles", {})
     
     extracted_styles = {
         "text_styles": {},
@@ -339,6 +344,227 @@ layout_structure = {
 
 print(f"[LOG] Phase 1 完了: 構造解析結果を保存")
 
+# ---------------- レイアウト分析機能 ----------------
+def analyze_layout_structure(element):
+    """要素のレイアウト構造を分析（カラム数、配置パターンなど）"""
+    children = element.get("children", [])
+    if not children:
+        return {"type": "single", "columns": 1}
+    
+    # Auto Layout情報を取得
+    layout_mode = element.get("layoutMode", "NONE")
+    primary_axis_align = element.get("primaryAxisAlignItems", "MIN")
+    
+    # 子要素の位置を分析
+    child_positions = []
+    for child in children:
+        bounds = child.get("absoluteBoundingBox", {})
+        child_positions.append({
+            "id": child.get("id"),
+            "name": child.get("name", ""),
+            "type": child.get("type", ""),
+            "x": bounds.get("x", 0),
+            "y": bounds.get("y", 0),
+            "width": bounds.get("width", 0),
+            "height": bounds.get("height", 0),
+            "element": child
+        })
+    
+    if not child_positions:
+        return {"type": "single", "columns": 1}
+    
+    # Y座標でソートして横並び要素を検出
+    sorted_by_y = sorted(child_positions, key=lambda x: x["y"])
+    
+    # 同じY座標レンジにある要素をグループ化（横並び検出）
+    horizontal_groups = []
+    current_group = [sorted_by_y[0]]
+    y_threshold = 50  # Y座標の許容範囲
+    
+    for i in range(1, len(sorted_by_y)):
+        current_y = sorted_by_y[i]["y"]
+        last_y = current_group[-1]["y"]
+        
+        if abs(current_y - last_y) <= y_threshold:
+            current_group.append(sorted_by_y[i])
+        else:
+            if len(current_group) > 1:  # 横並び要素がある場合のみ追加
+                horizontal_groups.append(current_group)
+            current_group = [sorted_by_y[i]]
+    
+    # 最後のグループを追加
+    if len(current_group) > 1:
+        horizontal_groups.append(current_group)
+    
+    # レイアウトパターンを判定
+    layout_info = {"type": "single", "columns": 1, "layout_mode": layout_mode}
+    
+    if horizontal_groups:
+        # 最大カラム数を取得
+        max_columns = max(len(group) for group in horizontal_groups)
+        layout_info["columns"] = max_columns
+        
+        if max_columns == 2:
+            layout_info["type"] = "two-column"
+            # 2カラムの比率を分析
+            ratios = analyze_column_ratios(horizontal_groups)
+            layout_info["ratios"] = ratios
+        elif max_columns == 3:
+            layout_info["type"] = "three-column"
+        elif max_columns >= 4:
+            layout_info["type"] = "multi-column"
+        
+        # 画像とテキストの配置パターンを分析
+        content_patterns = analyze_content_patterns(horizontal_groups)
+        layout_info["content_patterns"] = content_patterns
+    
+    return layout_info
+
+def analyze_column_ratios(horizontal_groups):
+    """カラムの幅比率を分析（より精密な比率検出）"""
+    ratios = []
+    
+    for group in horizontal_groups:
+        if len(group) >= 2:
+            # X座標でソート
+            sorted_group = sorted(group, key=lambda x: x["x"])
+            total_width = sum(item["width"] for item in sorted_group)
+            
+            if total_width > 0:
+                # 各要素の比率を計算
+                element_ratios = []
+                for item in sorted_group:
+                    ratio = item["width"] / total_width
+                    element_ratios.append(ratio)
+                
+                # 精密な比率判定
+                ratio_class = classify_ratio_precise(element_ratios)
+                print(f"[LOG] 比率分析: 要素数={len(sorted_group)}, 実際の比率={element_ratios}, 分類結果={ratio_class}")
+                ratios.append(ratio_class)
+    
+    return ratios
+
+def classify_ratio_precise(ratios):
+    """比率を精密に分類"""
+    if len(ratios) == 2:
+        left_ratio, right_ratio = ratios
+        
+        # 1:1 (50%:50%) の判定 - 誤差±5%
+        if abs(left_ratio - 0.5) < 0.05 and abs(right_ratio - 0.5) < 0.05:
+            return "1:1"
+        
+        # 1:2 (33%:67%) の判定 - 誤差±5%
+        if (abs(left_ratio - 0.33) < 0.05 and abs(right_ratio - 0.67) < 0.05) or \
+           (abs(left_ratio - 0.67) < 0.05 and abs(right_ratio - 0.33) < 0.05):
+            return "1:2"
+        
+        # 2:3 (40%:60%) の判定 - 誤差±5%
+        if (abs(left_ratio - 0.4) < 0.05 and abs(right_ratio - 0.6) < 0.05) or \
+           (abs(left_ratio - 0.6) < 0.05 and abs(right_ratio - 0.4) < 0.05):
+            return "2:3"
+        
+        # 1:3 (25%:75%) の判定 - 誤差±5%
+        if (abs(left_ratio - 0.25) < 0.05 and abs(right_ratio - 0.75) < 0.05) or \
+           (abs(left_ratio - 0.75) < 0.05 and abs(right_ratio - 0.25) < 0.05):
+            return "1:3"
+        
+        # 3:4 (43%:57%) の判定 - 誤差±3%
+        if (abs(left_ratio - 0.43) < 0.03 and abs(right_ratio - 0.57) < 0.03) or \
+           (abs(left_ratio - 0.57) < 0.03 and abs(right_ratio - 0.43) < 0.03):
+            return "3:4"
+        
+        # その他の場合は実際の比率を返す
+        return f"{left_ratio:.2f}:{right_ratio:.2f}"
+    
+    elif len(ratios) == 3:
+        # 3カラムの場合
+        if all(abs(ratio - 0.33) < 0.05 for ratio in ratios):
+            return "1:1:1"
+        else:
+            return ":".join([f"{ratio:.2f}" for ratio in ratios])
+    
+    # その他の場合
+    return ":".join([f"{ratio:.2f}" for ratio in ratios])
+
+def analyze_content_patterns(horizontal_groups):
+    """コンテンツパターンを分析（画像-テキスト、テキスト-画像など）"""
+    patterns = []
+    
+    for group in horizontal_groups:
+        group_pattern = []
+        for item in sorted(group, key=lambda x: x["x"]):  # X座標でソート
+            if is_image_element(item["element"]):
+                group_pattern.append("image")
+            elif item["type"] == "TEXT":
+                group_pattern.append("text")
+            else:
+                group_pattern.append("content")
+        
+        pattern_str = "-".join(group_pattern)
+        if pattern_str not in patterns:
+            patterns.append(pattern_str)
+    
+    return patterns
+
+def generate_layout_class(layout_info):
+    """レイアウト情報からCSSクラス名を生成"""
+    classes = []
+    
+    # 基本レイアウトクラス
+    if layout_info["type"] == "two-column":
+        classes.append("layout-2col")
+        
+        # 精密な比率情報があれば追加
+        if layout_info.get("ratios"):
+            ratio = layout_info["ratios"][0]
+            if ratio == "1:1":
+                classes.append("layout-2col-equal")
+            elif ratio == "1:2":
+                classes.append("layout-2col-1-2")
+            elif ratio == "2:3":
+                classes.append("layout-2col-2-3")
+            elif ratio == "1:3":
+                classes.append("layout-2col-1-3")
+            elif ratio == "3:4":
+                classes.append("layout-2col-3-4")
+            else:
+                # カスタム比率の場合
+                ratio_safe = ratio.replace(":", "-").replace(".", "")
+                classes.append(f"layout-2col-{ratio_safe}")
+    
+    elif layout_info["type"] == "three-column":
+        classes.append("layout-3col")
+        
+        # 3カラムの比率
+        if layout_info.get("ratios"):
+            ratio = layout_info["ratios"][0]
+            if ratio == "1:1:1":
+                classes.append("layout-3col-equal")
+            else:
+                ratio_safe = ratio.replace(":", "-").replace(".", "")
+                classes.append(f"layout-3col-{ratio_safe}")
+    
+    elif layout_info["type"] == "multi-column":
+        classes.append(f"layout-{layout_info['columns']}col")
+    
+    # コンテンツパターンクラス
+    if layout_info.get("content_patterns"):
+        for pattern in layout_info["content_patterns"]:
+            if pattern == "image-text":
+                classes.append("layout-image-text")
+            elif pattern == "text-image":
+                classes.append("layout-text-image")
+            elif pattern == "image-image":
+                classes.append("layout-image-gallery")
+    
+    # Auto Layoutクラス
+    if layout_info.get("layout_mode") == "HORIZONTAL":
+        classes.append("layout-flex-row")
+    elif layout_info.get("layout_mode") == "VERTICAL":
+        classes.append("layout-flex-col")
+    
+    return " ".join(classes) if classes else ""
+
 # ---------------- Phase 2: セクション詳細解析とHTML生成 ----------------
 print("[LOG] === Phase 2: セクション詳細解析開始 ===")
 
@@ -441,17 +667,106 @@ def extract_text_styles(text_element, figma_styles=None):
     
     return style_info
 
-def generate_text_class(style_info):
-    """スタイル情報からCSSクラス名を生成"""
-    # Figmaスタイル名がある場合はそれを優先
+def generate_semantic_class(element_name, element_type="", style_info=None, element_context=None):
+    """レイヤー名から意味のあるクラス名を生成"""
+    if not element_name:
+        return None
+    
+    # レイヤー名をクリーンアップ
+    clean_name = element_name.strip()
+    
+    # BEM風の命名規則を適用
+    # セクション、コンポーネント、モディファイアを自動判定
+    semantic_keywords = {
+        # セクション
+        "section": "section",
+        "hero": "hero",
+        "about": "about", 
+        "service": "service",
+        "contact": "contact",
+        "footer": "footer",
+        "header": "header",
+        "nav": "nav",
+        
+        # コンポーネント
+        "button": "btn",
+        "card": "card",
+        "title": "title", 
+        "heading": "heading",
+        "text": "text",
+        "image": "img",
+        "icon": "icon",
+        "logo": "logo",
+        "menu": "menu",
+        "list": "list",
+        
+        # 日本語対応
+        "ボタン": "btn",
+        "カード": "card", 
+        "タイトル": "title",
+        "見出し": "heading",
+        "テキスト": "text",
+        "画像": "img",
+        "アイコン": "icon",
+        "メニュー": "menu",
+        "リスト": "list",
+    }
+    
+    # レイヤー名から意味のある単語を抽出
+    name_lower = clean_name.lower()
+    
+    # 最適なマッチを探す
+    for keyword, semantic_class in semantic_keywords.items():
+        if keyword in name_lower:
+            # 追加情報があれば付加
+            modifier = ""
+            if "primary" in name_lower or "main" in name_lower or "メイン" in name_lower:
+                modifier = "--primary"
+            elif "secondary" in name_lower or "sub" in name_lower or "サブ" in name_lower:
+                modifier = "--secondary"
+            elif "small" in name_lower or "sm" in name_lower or "小" in name_lower:
+                modifier = "--sm"
+            elif "large" in name_lower or "lg" in name_lower or "大" in name_lower:
+                modifier = "--lg"
+            
+            return f"{semantic_class}{modifier}"
+    
+    # キーワードにマッチしない場合の処理
+    # 数字のみのレイヤー名（FigmaのIDなど）はそのまま使用
+    if re.match(r'^\d+$', clean_name):
+        # 数字のみの場合は、プレフィックスを付けてCSS的に有効にする
+        return f"layer-{clean_name}"
+    
+    # レイヤー名をそのまま使用（英数字以外をハイフンに）
+    safe_name = re.sub(r'[^a-zA-Z0-9\-_]', '-', clean_name)
+    safe_name = re.sub(r'-+', '-', safe_name).strip('-').lower()
+    
+    # 空の場合や短すぎる場合のフォールバック
+    if not safe_name or len(safe_name) < 2:
+        return "content-item"
+    
+    return safe_name
+
+def generate_text_class(style_info, element_name="", element_id=""):
+    """スタイル情報からCSSクラス名を生成（レイヤー名優先、色情報も考慮）"""
+    # 1. レイヤー名から意味のあるクラス名を生成（最優先）
+    semantic_class = generate_semantic_class(element_name)
+    if semantic_class and semantic_class not in ["content-item", "layout-item"]:
+        return semantic_class
+    
+    # 2. Figmaスタイル名がある場合はそれを使用
     if style_info.get("figma_style_name"):
-        # Figmaスタイル名をCSS適用可能なクラス名に変換
         figma_class = style_info["figma_style_name"].lower().replace(" ", "-").replace("/", "-")
         return f"figma-style-{figma_class}"
     
-    # フォントサイズとウエイトでクラス名を作成（フォールバック）
+    # 3. 色情報を含むユニークなクラス名を生成
     font_size = int(style_info["font_size"])
     font_weight = style_info["font_weight"]
+    color = style_info.get("color", "#000000")
+    
+    # 色からハッシュを生成
+    import hashlib
+    color_hash = hashlib.md5(color.encode()).hexdigest()[:6]
     
     class_parts = ["text"]
     class_parts.append(f"size-{font_size}")
@@ -461,13 +776,19 @@ def generate_text_class(style_info):
     elif font_weight >= 500:
         class_parts.append("medium")
     
+    # 色情報を追加してユニーク性を確保
+    class_parts.append(f"c{color_hash}")
+    
     return "-".join(class_parts)
 
 # HTML生成関数
 def generate_html_for_section(section_data, wrapper_width):
     """セクションデータからHTMLを生成"""
-    section_name = sanitize_filename(section_data.get("name", "unnamed_section"))
-    section_class = section_name.lower().replace(" ", "-")
+    section_name = section_data.get("name", "unnamed_section")
+    
+    # セクション名から意味のあるクラス名を生成
+    semantic_class = generate_semantic_class(section_name, "section")
+    section_class = semantic_class if semantic_class else sanitize_filename(section_name).lower().replace(" ", "-")
     
     html = f'''<section class="{section_class}">
   <div class="container" style="max-width: {wrapper_width}px; margin: 0 auto;">
@@ -556,7 +877,8 @@ def generate_element_html(element, indent=""):
         
         # フォント情報の取得（Figmaスタイル優先）
         style_info = extract_text_styles(element, layout_structure.get("figma_styles"))
-        style_class = generate_text_class(style_info)
+        element_id = element.get("id", "")
+        style_class = generate_text_class(style_info, element_name, element_id)
         
         # 見出しレベルの判定
         tag_name = detect_heading_level(element)
@@ -571,8 +893,10 @@ def generate_element_html(element, indent=""):
         # 画像要素かどうかをチェック
         if is_image_element(element):
             # 画像プレースホルダーを生成
+            semantic_class = generate_semantic_class(element_name, "image")
+            img_class = semantic_class if semantic_class else "image-placeholder"
             safe_name = element_name.replace(" ", "_").replace("(", "").replace(")", "")
-            return f'{indent}<div class="image-placeholder" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
+            return f'{indent}<div class="{img_class}" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
         else:
             # 通常の矩形要素
             fills = element.get("fills", [])
@@ -588,8 +912,28 @@ def generate_element_html(element, indent=""):
     
     elif element_type == "FRAME":
         # フレームは子要素を含むコンテナとして処理
-        frame_class = sanitize_filename(element_name).lower().replace(" ", "-")
-        html = f'{indent}<div class="frame-{frame_class}">\n'
+        semantic_class = generate_semantic_class(element_name, element_type)
+        frame_class = semantic_class if semantic_class else sanitize_filename(element_name).lower().replace(" ", "-")
+        
+        # レイアウト分析を実行
+        layout_info = analyze_layout_structure(element)
+        layout_class = generate_layout_class(layout_info)
+        
+        # クラス名を結合
+        all_classes = [frame_class]
+        if layout_class:
+            all_classes.append(layout_class)
+        
+        final_class = " ".join(all_classes)
+        html = f'{indent}<div class="{final_class}">\n'
+        
+        # レイアウト情報をログ出力
+        if layout_info["columns"] > 1:
+            print(f"[LOG] Layout detected: {layout_info['type']} ({layout_info['columns']} columns) - {element_name}")
+            if layout_info.get("ratios"):
+                print(f"[LOG]   Ratios: {layout_info['ratios']}")
+            if layout_info.get("content_patterns"):
+                print(f"[LOG]   Patterns: {layout_info['content_patterns']}")
         
         for child in element.get("children", []):
             html += generate_element_html(child, indent + "  ")
@@ -603,10 +947,15 @@ def generate_element_html(element, indent=""):
             bounds = element.get("absoluteBoundingBox", {})
             width = bounds.get("width", 100)
             height = bounds.get("height", 100)
+            semantic_class = generate_semantic_class(element_name, "image")
+            img_class = semantic_class if semantic_class else "image-placeholder"
             safe_name = element_name.replace(" ", "_").replace("(", "").replace(")", "")
-            return f'{indent}<div class="image-placeholder" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
+            return f'{indent}<div class="{img_class}" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
         else:
-            return f'{indent}<div class="unknown-element" data-type="{element_type}"><!-- {element_name} --></div>\n'
+            # その他の要素でもレイヤー名を活用
+            semantic_class = generate_semantic_class(element_name, element_type)
+            element_class = semantic_class if semantic_class else "unknown-element"
+            return f'{indent}<div class="{element_class}" data-type="{element_type}"><!-- {element_name} --></div>\n'
 
 def generate_css(layout_structure, collected_text_styles):
     """基本的なCSSを生成（複数幅パターン対応＋Figmaスタイル）"""
@@ -717,7 +1066,190 @@ section {{
 
 '''
     
-    css += '''/* Collected text styles (fallback) */
+    css += '''/* Semantic Component Styles */
+.hero {
+    padding: 80px 0;
+    text-align: center;
+}
+
+.btn, .btn--primary, .btn--secondary {
+    display: inline-block;
+    padding: 12px 24px;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+}
+
+.btn--primary {
+    background-color: #007bff;
+    /* color inherited from Figma data */
+}
+
+.btn--secondary {
+    background-color: #6c757d;
+    /* color inherited from Figma data */
+}
+
+.card {
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin: 10px 0;
+}
+
+.title, .heading {
+    margin: 20px 0 10px 0;
+    line-height: 1.2;
+}
+
+.img, .logo, .icon {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.nav {
+    display: flex;
+    align-items: center;
+    padding: 10px 0;
+}
+
+.menu {
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    gap: 20px;
+}
+
+.footer {
+    background-color: #f8f9fa;
+    padding: 40px 0;
+    margin-top: 40px;
+}
+
+/* Layer-based classes (preserving Figma layer names) */
+[class^="layer-"] {
+    display: block;
+}
+
+/* Layout Structure Classes */
+.layout-2col {
+    display: flex;
+    gap: 20px;
+}
+
+.layout-2col-equal > * {
+    flex: 1;
+}
+
+.layout-2col-1-2 > *:first-child {
+    flex: 1;
+}
+
+.layout-2col-1-2 > *:last-child {
+    flex: 2;
+}
+
+.layout-2col-1-3 > *:first-child {
+    flex: 1;
+}
+
+.layout-2col-1-3 > *:last-child {
+    flex: 3;
+}
+
+.layout-2col-2-3 > *:first-child {
+    flex: 2;
+}
+
+.layout-2col-2-3 > *:last-child {
+    flex: 3;
+}
+
+.layout-2col-3-4 > *:first-child {
+    flex: 3;
+}
+
+.layout-2col-3-4 > *:last-child {
+    flex: 4;
+}
+
+.layout-3col {
+    display: flex;
+    gap: 20px;
+}
+
+.layout-3col-equal > * {
+    flex: 1;
+}
+
+.layout-3col > * {
+    flex: 1;
+}
+
+.layout-4col {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+}
+
+.layout-image-text {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+}
+
+.layout-text-image {
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    gap: 20px;
+}
+
+.layout-image-gallery {
+    display: flex;
+    gap: 15px;
+}
+
+.layout-flex-row {
+    display: flex;
+    flex-direction: row;
+    gap: 15px;
+}
+
+.layout-flex-col {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* Responsive Layout */
+@media (max-width: 768px) {
+    .layout-2col,
+    .layout-3col,
+    .layout-4col,
+    .layout-image-text,
+    .layout-text-image {
+        flex-direction: column;
+    }
+    
+    .layout-2col-1-2 > *,
+    .layout-2col-1-3 > *,
+    .layout-2col-2-3 > *,
+    .layout-2col-3-4 > * {
+        flex: 1;
+    }
+    
+    .layout-4col {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Collected text styles (fallback) */
 '''
     
     # 収集されたテキストスタイルごとにCSSクラスを生成（Figmaスタイル以外）
@@ -796,7 +1328,9 @@ def collect_text_styles_from_element(element, figma_styles=None):
     """要素からテキストスタイルを収集"""
     if element.get("type") == "TEXT":
         style_info = extract_text_styles(element, figma_styles)
-        class_name = generate_text_class(style_info)
+        element_name = element.get("name", "")
+        element_id = element.get("id", "")
+        class_name = generate_text_class(style_info, element_name, element_id)
         collected_text_styles[class_name] = style_info
     
     # 子要素も再帰的に処理
