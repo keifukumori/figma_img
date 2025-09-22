@@ -1,0 +1,20 @@
+# Environment variables
+.env
+
+# Generated output data (exclude all program outputs)
+figma_images/
+figma_layout/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE files
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
