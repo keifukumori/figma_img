@@ -822,7 +822,7 @@ def map_auto_layout_inline_styles(element):
 
         # gap
         gap = element.get("itemSpacing")
-        if isinstance(gap, (int, float)):
+        if isinstance(gap, (int, float)) and gap > 0:
             style_parts.append(f"gap:{int(gap)}px")
 
         # padding
@@ -850,6 +850,13 @@ def map_auto_layout_inline_styles(element):
         align = map_align(counter)
         style_parts.append(f"justify-content:{justify}")
         style_parts.append(f"align-items:{align}")
+        
+        # wrap設定（Figma Auto Layoutのwrap対応）
+        layout_wrap = element.get("layoutWrap")
+        if layout_wrap == "WRAP":
+            style_parts.append("flex-wrap:wrap")
+        else:
+            style_parts.append("flex-wrap:nowrap")
 
     return "; ".join(style_parts)
 
@@ -1339,25 +1346,52 @@ def _intersection_area(a, b):
     iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
     return iw * ih
 
-def _child_auto_layout_rules(parent_layout_mode, child):
+def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None):
     """Return (styles, skip_width, skip_height)
     - styles: list of CSS props like 'flex:1 1 auto', 'align-self:center'
     - skip_width/skip_height: whether to suppress fixed width/height on this child
+    
+    新ルール: Auto Layoutコンテナの子要素は基本的に柔軟なサイズにする
+    parent_layout_info: 親要素のレイアウト分析結果（比率情報含む）
     """
     styles = []
     skip_w = False
     skip_h = False
     if not parent_layout_mode:
         return styles, skip_w, skip_h
+    
     layout_grow = child.get("layoutGrow", 0)
     layout_align = (child.get("layoutAlign") or "").upper()
-    # flex grow on primary axis
-    if layout_grow == 1:
-        styles.append("flex:1 1 auto")
-        if parent_layout_mode == "HORIZONTAL":
-            skip_w = True
-        elif parent_layout_mode == "VERTICAL":
-            skip_h = True
+    
+    # Auto Layout内の要素は基本的に柔軟サイズ
+    if parent_layout_mode == "HORIZONTAL":
+        # 水平レイアウト内では幅を柔軟にする
+        skip_w = True
+        if layout_grow > 0:
+            # layoutGrowが指定されている場合はそれを使用（縮小禁止）
+            styles.append(f"flex:{layout_grow} 0 0")
+        else:
+            # 親のレイアウト情報から適切な比率を取得
+            flex_ratio = 1  # デフォルト均等分割
+            if parent_layout_info and parent_layout_info.get("type") == "two-column":
+                ratios = parent_layout_info.get("ratios", [])
+                if len(ratios) >= 2:
+                    # 2カラムの比率情報を使用（例：[1, 2] → 1:2の比率）
+                    child_index = 0  # 実際の子要素順序は別途取得が必要
+                    if child_index < len(ratios):
+                        flex_ratio = ratios[child_index]
+            # grow=0の場合は適切な比率で縮小禁止（画像見切れ防止）
+            styles.append(f"flex:{flex_ratio} 0 auto")
+    elif parent_layout_mode == "VERTICAL":
+        # 垂直レイアウト内では高さを柔軟にする
+        skip_h = True
+        if layout_grow > 0:
+            # layoutGrowが指定されている場合はそれを使用（縮小禁止）
+            styles.append(f"flex:{layout_grow} 0 auto")
+        else:
+            # grow=0の場合は均等分割で縮小禁止
+            styles.append("flex:1 0 auto")
+    
     # align-self on counter axis
     align_map = {
         "MIN": "flex-start",
@@ -1373,6 +1407,7 @@ def _child_auto_layout_rules(parent_layout_mode, child):
                 skip_h = True
             elif parent_layout_mode == "VERTICAL":
                 skip_w = True
+    
     return styles, skip_w, skip_h
 
 
@@ -1440,42 +1475,89 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         # Auto Layoutをinline styleで反映
         inline_style = map_auto_layout_inline_styles(element)
         style_parts = [inline_style] if inline_style else []
-        # respect container sizing modes when present
+        
+        # Auto Layout環境での自動サイズ調整検出を強化
         sizing_primary = (element.get("primaryAxisSizingMode") or "").upper()
         sizing_counter = (element.get("counterAxisSizingMode") or "").upper()
+        layout_grow = element.get("layoutGrow", 0)
+        layout_align = (element.get("layoutAlign") or "").upper()
+        
         add_w = True
         add_h = True
-        if layout_info.get("layout_mode") == "HORIZONTAL":
+        
+        # 自身がAuto Layoutコンテナの場合のサイズモード
+        own_layout_mode = layout_info.get("layout_mode")
+        
+        # デバッグ：Auto Layout情報をログ出力（重要なもののみ）
+        element_name = element.get("name", "unnamed")
+        if (own_layout_mode and own_layout_mode != "NONE") or (parent_layout_mode and parent_layout_mode != "NONE") or layout_grow > 0:
+            print(f"[AUTO-LAYOUT] {element_name}: own={own_layout_mode}, parent={parent_layout_mode}, primary={sizing_primary}, counter={sizing_counter}, grow={layout_grow}, align={layout_align}")
+        if own_layout_mode == "HORIZONTAL":
             if sizing_primary == "AUTO":
                 add_w = False
+                # 内容に合わせて自動幅 (flex-shrink対応)
+                style_parts.append("width:auto")
+            elif sizing_primary == "FILL":
+                add_w = False
+                style_parts.append("width:100%")
             if sizing_counter == "AUTO":
                 add_h = False
-        elif layout_info.get("layout_mode") == "VERTICAL":
+                style_parts.append("height:auto")
+            elif sizing_counter == "FILL":
+                add_h = False
+                style_parts.append("height:100%")
+        elif own_layout_mode == "VERTICAL":
             if sizing_primary == "AUTO":
                 add_h = False
+                style_parts.append("height:auto")
+            elif sizing_primary == "FILL":
+                add_h = False
+                style_parts.append("height:100%")
             if sizing_counter == "AUTO":
                 add_w = False
-        # also consider parent layout intention for this element (stretch/grow)
+                style_parts.append("width:auto")
+            elif sizing_counter == "FILL":
+                add_w = False
+                style_parts.append("width:100%")
+        
+        # 親からのAuto Layout制約を考慮
         if parent_layout_mode:
-            child_rules, skip_w_child, skip_h_child = _child_auto_layout_rules(parent_layout_mode, element)
+            child_rules, skip_w_child, skip_h_child = _child_auto_layout_rules(parent_layout_mode, element, layout_info)
             if skip_w_child:
                 add_w = False
-                # prefer full-width in vertical stacks
+                # 垂直スタック内では全幅、水平スタック内ではflex-grow
                 if parent_layout_mode == "VERTICAL":
-                    style_parts.append("width:100%")
+                    if layout_align == "STRETCH":
+                        style_parts.append("width:100%")
+                    else:
+                        style_parts.append("width:auto")
+                elif parent_layout_mode == "HORIZONTAL" and layout_grow > 0:
+                    # flex-growが設定されている場合は明示的な幅は不要
+                    pass
             if skip_h_child:
                 add_h = False
                 if parent_layout_mode == "HORIZONTAL":
-                    style_parts.append("height:100%")
+                    if layout_align == "STRETCH":
+                        style_parts.append("height:100%")
+                    else:
+                        style_parts.append("height:auto")
+                elif parent_layout_mode == "VERTICAL" and layout_grow > 0:
+                    pass
             # attach flex/align styles from parent's auto-layout intent
             if child_rules:
                 style_parts.extend(child_rules)
+        
+        # 固定サイズの出力（Auto Layoutの意図を尊重）
         # 背景コンテナは固定px幅を出さない（フルブリード化する）
         if isinstance(w, (int, float)) and w > 0 and add_w and not has_image_fill:
-            style_parts.append(f"width:{int(w)}px")
+            # Auto Layout環境では固定幅を避ける傾向
+            if parent_layout_mode or own_layout_mode:
+                # min-widthとして出力してレスポンシブ性を保持
+                style_parts.append(f"min-width:{int(w)}px")
+            else:
+                style_parts.append(f"width:{int(w)}px")
         if isinstance(h, (int, float)) and h > 0 and add_h and not (has_image_fill and USE_IMAGES and background_wrapper_style):
-            # 高さはコンテンツで伸びても良いようにmin-heightを優先
-            # 背景画像がある場合は高さをwrapper要素に移動済みなので元要素では出力しない
+            # 高さは常にmin-heightを優先（コンテンツで伸びることを許可）
             style_parts.append(f"min-height:{int(h)}px")
         if bg_style:
             style_parts.extend(bg_style)
@@ -1524,7 +1606,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             if should_exclude_node(child):
                 continue
             # apply child auto-layout rules if this container is auto-layout
-            child_styles, skip_w, skip_h = _child_auto_layout_rules(layout_info.get("layout_mode"), child)
+            child_styles, skip_w, skip_h = _child_auto_layout_rules(layout_info.get("layout_mode"), child, layout_info)
             # enrich child node styles
             child_id = child.get("id")
             if child_id and child_styles:
@@ -1559,7 +1641,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             node_class = f"n-{node_safe}" if node_safe else None
             # 固有サイズをCSSに委譲
             # parent auto-layout rules may suppress fixed width/height
-            child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element)
+            child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = []
             if not skip_w:
                 node_props.append(f"width: {int(width)}px")
@@ -1593,7 +1675,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             node_id = element.get("id", "")
             node_safe = css_safe_identifier(node_id) if node_id else None
             node_class = f"n-{node_safe}" if node_safe else None
-            child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element)
+            child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = [f"background-color: {bg_color}"]
             if not skip_w:
                 node_props.append(f"width: {int(width)}px")
