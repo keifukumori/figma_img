@@ -1358,15 +1358,26 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     skip_w = False
     skip_h = False
     if not parent_layout_mode:
+        # 親がAuto Layoutでない場合でも、画像要素は固定幅を避ける傾向
+        has_image = is_image_element(child)
+        if has_image:
+            skip_w = True
+            styles.append("flex:1 0 auto")
         return styles, skip_w, skip_h
     
     layout_grow = child.get("layoutGrow", 0)
     layout_align = (child.get("layoutAlign") or "").upper()
     
+    # 画像を含む要素はAuto Layout内で固定幅を避ける
+    has_image = is_image_element(child)
+    
     # Auto Layout内の要素は基本的に柔軟サイズ
     if parent_layout_mode == "HORIZONTAL":
         # 水平レイアウト内では幅を柔軟にする
         skip_w = True
+        # 画像要素は特に固定幅を避ける
+        if has_image:
+            skip_w = True
         if layout_grow > 0:
             # layoutGrowが指定されている場合はそれを使用（縮小禁止）
             styles.append(f"flex:{layout_grow} 0 0")
@@ -1385,6 +1396,9 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     elif parent_layout_mode == "VERTICAL":
         # 垂直レイアウト内では高さを柔軟にする
         skip_h = True
+        # 画像要素は垂直レイアウトでも幅の固定を避ける
+        if has_image:
+            skip_w = True
         if layout_grow > 0:
             # layoutGrowが指定されている場合はそれを使用（縮小禁止）
             styles.append(f"flex:{layout_grow} 0 auto")
