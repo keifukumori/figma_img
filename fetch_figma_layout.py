@@ -499,7 +499,7 @@ def fetch_figma_image_urls(file_key, node_ids, image_format="png", scale=1.0):
     data = r.json()
     return data.get("images", {})
 
-def download_images(url_map, out_dir, file_ext="png"):
+def download_images(url_map, out_dir, file_ext="png", filename_suffix=""):
     os.makedirs(out_dir, exist_ok=True)
     id_to_relpath = {}
     for node_id, url in url_map.items():
@@ -507,11 +507,11 @@ def download_images(url_map, out_dir, file_ext="png"):
             continue
         try:
             safe_id = css_safe_identifier(node_id)
-            filename = f"{safe_id}.{file_ext}"
+            filename = f"{safe_id}{filename_suffix}.{file_ext}"
             abs_path = os.path.join(out_dir, filename)
             # Cache: skip download if file exists and not forced
             if os.path.exists(abs_path) and not FORCE_IMAGE_REDOWNLOAD:
-                id_to_relpath[node_id] = os.path.join("images", filename)
+                id_to_relpath[node_id] = os.path.join("../images", filename)
                 print(f"[CACHE] Using existing image: {abs_path}")
                 continue
 
@@ -519,7 +519,7 @@ def download_images(url_map, out_dir, file_ext="png"):
             resp.raise_for_status()
             with open(abs_path, "wb") as f:
                 f.write(resp.content)
-            id_to_relpath[node_id] = os.path.join("images", filename)
+            id_to_relpath[node_id] = os.path.join("../images", filename)
             print(f"[LOG] Downloaded image: {abs_path}")
         except Exception as e:
             print(f"[WARN] Failed to download image for {node_id}: {e}")
@@ -1023,7 +1023,9 @@ if USE_IMAGES:
         image_ids = collect_image_node_ids(target_frame)
         print(f"[LOG] Image nodes detected: {len(image_ids)}")
         url_map = fetch_figma_image_urls(FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
-        images_dir = os.path.join(project_dir, "images")
+        # 共通のimagesディレクトリを使用（OUTPUT_DIRの直下）
+        base_output_dir = os.path.join(OUTPUT_DIR, os.path.basename(os.path.dirname(project_dir)))
+        images_dir = os.path.join(base_output_dir, "images")
         if DOWNLOAD_IMAGES:
             IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT)
         else:
@@ -1036,7 +1038,7 @@ if USE_IMAGES:
                 filename = f"{safe_id}.{IMAGE_FORMAT}"
                 abs_path = os.path.join(images_dir, filename)
                 if os.path.exists(abs_path):
-                    tmp_map[nid] = os.path.join("images", filename)
+                    tmp_map[nid] = os.path.join("../images", filename)
                 else:
                     tmp_map[nid] = url
             IMAGE_URL_MAP = tmp_map
@@ -2260,7 +2262,7 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
             if not nid:
                 continue
             safe_id = css_safe_identifier(nid) if nid else ""
-            pc_image_map[nid] = os.path.join(PC_SAFE_FRAME_NAME, 'images', f"{safe_id}.{IMAGE_FORMAT}")
+            pc_image_map[nid] = f"images/{safe_id}.{IMAGE_FORMAT}"
 
     # PCセクションHTML生成（結合用）
     IMAGE_URL_MAP = pc_image_map
@@ -2401,9 +2403,11 @@ if SP_FRAME_NODE_ID:
                 image_ids = collect_image_node_ids(target_frame)
                 print(f"[LOG] SP Image nodes detected: {len(image_ids)}")
                 url_map = fetch_figma_image_urls(SP_FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
-                images_dir = os.path.join(project_dir, "images")
+                # 共通のimagesディレクトリを使用（OUTPUT_DIRの直下）
+                base_output_dir = os.path.join(OUTPUT_DIR, os.path.basename(os.path.dirname(project_dir)))
+                images_dir = os.path.join(base_output_dir, "images")
                 if DOWNLOAD_IMAGES:
-                    IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT)
+                    IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT, "_sp")
                 else:
                     # ローカル優先、無ければCDN
                     tmp_map = {}
@@ -2411,10 +2415,10 @@ if SP_FRAME_NODE_ID:
                         if not nid or not url:
                             continue
                         safe_id = css_safe_identifier(nid)
-                        filename = f"{safe_id}.{IMAGE_FORMAT}"
+                        filename = f"{safe_id}_sp.{IMAGE_FORMAT}"
                         abs_path = os.path.join(images_dir, filename)
                         if os.path.exists(abs_path):
-                            tmp_map[nid] = os.path.join("images", filename)
+                            tmp_map[nid] = os.path.join("../images", filename)
                         else:
                             tmp_map[nid] = url
                     IMAGE_URL_MAP = tmp_map
@@ -2539,7 +2543,7 @@ if SP_FRAME_NODE_ID:
                     if not nid:
                         continue
                     safe_id = css_safe_identifier(nid) if nid else ""
-                    pc_image_map[nid] = os.path.join(PC_SAFE_FRAME_NAME, 'images', f"{safe_id}.{IMAGE_FORMAT}")
+                    pc_image_map[nid] = f"images/{safe_id}.{IMAGE_FORMAT}"
 
             sp_image_map = {}
             for section in SP_SECTIONS:
@@ -2548,7 +2552,7 @@ if SP_FRAME_NODE_ID:
                     if not nid:
                         continue
                     safe_id = css_safe_identifier(nid) if nid else ""
-                    sp_image_map[nid] = os.path.join(SP_SAFE_FRAME_NAME, 'images', f"{safe_id}.{IMAGE_FORMAT}")
+                    sp_image_map[nid] = f"images/{safe_id}_sp.{IMAGE_FORMAT}"
 
             # PCセクションHTML生成（結合用）
             COLLECT_NODE_STYLES = False
@@ -2671,7 +2675,7 @@ if SINGLE_HTML:
             if not nid:
                 continue
             safe_id = css_safe_identifier(nid)
-            pc_image_map[nid] = os.path.join(PC_SAFE_FRAME_NAME, 'images', f"{safe_id}.{IMAGE_FORMAT}")
+            pc_image_map[nid] = f"images/{safe_id}.{IMAGE_FORMAT}"
 
     # PC sections HTML
     IMAGE_URL_MAP = pc_image_map
