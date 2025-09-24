@@ -105,13 +105,16 @@ def collect_image_fill_refs(node):
     return refs
 
 
-def fetch_file_imagefill_urls(file_key, image_refs, token=None):
+def fetch_file_imagefill_urls(file_key, image_refs, token=None, image_format="png", scale=1.0):
     """Resolve imageRef (hash) -> URL using File Images API (no compositing)."""
     if not image_refs:
         return {}
     headers = {"X-Figma-Token": token} if token else {}
     ids_param = ",".join(sorted(set(image_refs)))
-    url = f"https://api.figma.com/v1/files/{file_key}/images?ids={ids_param}"
+    url = (
+        f"https://api.figma.com/v1/files/{file_key}/images?"
+        f"ids={ids_param}&format={image_format}&scale={scale}"
+    )
     print(f"[LOG] Resolving image fills: {url}")
     r = requests.get(url, headers=headers)
     r.raise_for_status()
@@ -229,7 +232,9 @@ def main():
     walk(pc_frame)
 
     # Resolve imageRef -> URL
-    ref_url_map = fetch_file_imagefill_urls(pc_file_key, all_refs, token)
+    ref_url_map = fetch_file_imagefill_urls(
+        pc_file_key, all_refs, token, args.image_format, float(args.image_scale)
+    )
 
     # Prepare final URL map per node (fallback to node render when ref missing)
     final_url_map = {}
@@ -287,7 +292,9 @@ def main():
                     walk_sp(c)
             walk_sp(sp_frame)
 
-            sp_ref_url_map = fetch_file_imagefill_urls(sp_file_key, sp_all_refs, token)
+            sp_ref_url_map = fetch_file_imagefill_urls(
+                sp_file_key, sp_all_refs, token, args.image_format, float(args.image_scale)
+            )
             sp_final_url_map = {}
             sp_fallback_nodes = []
             for nid in sp_image_ids:
