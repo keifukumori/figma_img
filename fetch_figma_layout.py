@@ -61,6 +61,72 @@ SP_SUFFIX = os.getenv("SP_SUFFIX", "-sp")
 SINGLE_HTML = os.getenv("SINGLE_HTML", "true").lower() == "true"  # keep combined output
 SINGLE_HTML_ONLY = os.getenv("SINGLE_HTML_ONLY", "true").lower() == "true"  # skip per-frame files
 
+# Offline/Local input options
+# - INPUT_JSON_FILE: PC用のローカルJSONを指定するとAPIを叩かずに解析
+# - SP_INPUT_JSON_FILE: SP用のローカルJSON
+# - OFFLINE_MODE=true: すべてのHTTPアクセスを抑止（画像URL取得/ダウンロードも行わない）
+# - IMAGE_SOURCE: auto|local  localの場合はローカル画像のみを参照
+INPUT_JSON_FILE = os.getenv("INPUT_JSON_FILE")
+SP_INPUT_JSON_FILE = os.getenv("SP_INPUT_JSON_FILE")
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() == "true"
+IMAGE_SOURCE = os.getenv("IMAGE_SOURCE", "auto").lower()
+USE_LOCAL_IMAGES_ONLY = OFFLINE_MODE or (IMAGE_SOURCE == "local")
+
+# Style scoping for node-specific (.n-*) rules
+# conservative: safest; block cascading color on non-text; allow essential layout/visuals
+# standard: block cascading color on non-text; otherwise allow
+# aggressive: allow all collected props
+NODE_STYLE_SCOPE = (os.getenv("NODE_STYLE_SCOPE", "conservative") or "conservative").lower()
+SUPPRESS_CONTAINER_WIDTH = (os.getenv("SUPPRESS_CONTAINER_WIDTH", "true").lower() == "true")
+SUPPRESS_FIXED_HEIGHT = (os.getenv("SUPPRESS_FIXED_HEIGHT", "true").lower() == "true")
+USE_ASPECT_RATIO = (os.getenv("USE_ASPECT_RATIO", "true").lower() == "true")
+
+# Horizontal padding normalization
+HPAD_MODE = (os.getenv("HPAD_MODE", "none") or "none").lower()  # none|trim|clamp
+HPAD_TRIM_MIN_PX = int(os.getenv("HPAD_TRIM_MIN_PX", "100") or 100)
+HPAD_SYMM_TOL_PX = int(os.getenv("HPAD_SYMM_TOL_PX", "16") or 16)
+HPAD_CLAMP_MIN_PX = int(os.getenv("HPAD_CLAMP_MIN_PX", "16") or 16)
+HPAD_CLAMP_VW = float(os.getenv("HPAD_CLAMP_VW", "5") or 5.0)  # -> e.g., 5vw
+HPAD_SCOPE = (os.getenv("HPAD_SCOPE", "wrapper_only") or "wrapper_only").lower()  # none|all|wrapper_only
+try:
+    HPAD_WRAPPER_MIN_WIDTH_RATIO = float(os.getenv("HPAD_WRAPPER_MIN_WIDTH_RATIO", "0.9") or 0.9)
+except Exception:
+    HPAD_WRAPPER_MIN_WIDTH_RATIO = 0.9
+
+# Child equalization and 2-col ABB ratio mapping
+STOP_CHILD_EQUALIZE = (os.getenv("STOP_CHILD_EQUALIZE", "true").lower() == "true")
+USE_ABB_RATIO_2COL = (os.getenv("USE_ABB_RATIO_2COL", "true").lower() == "true")
+USE_AL_RATIO_2COL = (os.getenv("USE_AL_RATIO_2COL", "true").lower() == "true")
+
+# Margin inference between siblings (non Auto Layout parents)
+INFER_SIBLING_MARGINS = (os.getenv("INFER_SIBLING_MARGINS", "true").lower() == "true")
+try:
+    MARGIN_INFER_MIN_PX = int(os.getenv("MARGIN_INFER_MIN_PX", "4") or 4)
+    MARGIN_INFER_MAX_PX = int(os.getenv("MARGIN_INFER_MAX_PX", "240") or 240)
+except Exception:
+    MARGIN_INFER_MIN_PX = 4
+    MARGIN_INFER_MAX_PX = 240
+
+# Fullbleed inner wrapper policy for image-fill containers: content|none
+BG_FULLBLEED_INNER = (os.getenv("BG_FULLBLEED_INNER", "content") or "content").lower()
+
+# 2-col equalization fallback when no ratio class detected
+EQUALIZE_2COL_FALLBACK = (os.getenv("EQUALIZE_2COL_FALLBACK", "true").lower() == "true")
+DETECT_EQUAL_2COL = (os.getenv("DETECT_EQUAL_2COL", "true").lower() == "true")
+
+# Track node kind for filtering and reporting: text|container|rect|image|line|other
+NODE_KIND_MAP = {}
+
+def set_node_kind(node_id, kind):
+    if not node_id:
+        return
+    try:
+        safe_id = css_safe_identifier(node_id)
+        if safe_id:
+            NODE_KIND_MAP[safe_id] = kind
+    except Exception:
+        pass
+
 def parse_figma_url(url):
     try:
         p = urlparse(url)
@@ -99,8 +165,13 @@ if SP_FIGMA_URL:
     if sp_nid:
         SP_FRAME_NODE_ID = sp_nid
 
-if not all([FIGMA_API_TOKEN, FILE_KEY, FRAME_NODE_ID]):
-    raise ValueError("APIトークン、ファイルキー、フレームIDを .env に設定してください。")
+# 入力検証：オフライン入力（ローカルJSON）ならAPIトークン/ファイルキーは不要
+if INPUT_JSON_FILE:
+    if not FRAME_NODE_ID:
+        raise ValueError("ローカルJSONを使用する場合でも FRAME_NODE_ID は必要です。")
+else:
+    if not all([FIGMA_API_TOKEN, FILE_KEY, FRAME_NODE_ID]):
+        raise ValueError("APIトークン、ファイルキー、フレームIDを .env に設定してください。")
 
 headers = {"X-Figma-Token": FIGMA_API_TOKEN}
 
@@ -267,6 +338,28 @@ def is_probable_header_footer(node):
         return True
     return False
 
+def is_wrapper_like(node, p_left: int, p_right: int) -> bool:
+    """Heuristically decide if a FRAME acts as a content wrapper.
+    Conditions:
+    - Node is a FRAME
+    - Width is close to root width (>= HPAD_WRAPPER_MIN_WIDTH_RATIO)
+    - Node is a direct child of root, or has symmetric horizontal padding within tolerance
+    """
+    try:
+        if (node.get('type') or '').upper() != 'FRAME':
+            return False
+        b = node.get('absoluteBoundingBox') or {}
+        rw = float((ROOT_FRAME_BOUNDS or {}).get('width') or 0)
+        w = float(b.get('width') or 0)
+        if rw <= 0 or w <= 0:
+            return False
+        wide = (w / rw) >= HPAD_WRAPPER_MIN_WIDTH_RATIO
+        symm = abs(int(p_left or 0) - int(p_right or 0)) <= HPAD_SYMM_TOL_PX
+        is_direct = node.get('id') in ROOT_CHILD_IDS
+        return wide and (is_direct or symm)
+    except Exception:
+        return False
+
 def _pick_solid_fill_rgba(element):
     """要素のfillsから最前面のSOLID塗りを選び、rgba文字列を返す。
     - Figmaのfills配列は下→上の順序のため、後方から探索
@@ -303,7 +396,19 @@ def fetch_file_json(file_key):
     resp.raise_for_status()
     return resp.json()
 
-file_data = fetch_file_json(FILE_KEY)
+def load_local_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        raise RuntimeError(f"ローカルJSONの読み込みに失敗しました: {path} ({e})")
+
+# ファイル情報の取得（ローカルJSON優先）
+if INPUT_JSON_FILE:
+    print(f"[LOG] Using local JSON file (PC): {INPUT_JSON_FILE}")
+    file_data = load_local_json(INPUT_JSON_FILE)
+else:
+    file_data = fetch_file_json(FILE_KEY)
 print("[LOG] Building reuse maps for include-like detection...")
 try:
     build_reuse_maps(file_data.get("document", {}))
@@ -325,6 +430,14 @@ if SAVE_RAW_DATA:
 
     with open(raw_data_file, "w", encoding="utf-8") as f:
         json.dump(file_data, f, ensure_ascii=False, indent=2)
+
+    # 直近参照用の固定名も保存（上書き）
+    try:
+        latest_pc = os.path.join(raw_data_dir, "latest_pc.json")
+        with open(latest_pc, "w", encoding="utf-8") as f:
+            json.dump(file_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] Failed to write latest_pc.json: {e}")
 
     print(f"[LOG] Raw Figma data saved: {raw_data_file}")
     print(f"[LOG] Raw data size: {len(json.dumps(file_data))} characters")
@@ -825,13 +938,34 @@ def map_auto_layout_inline_styles(element):
         if isinstance(gap, (int, float)) and gap > 0:
             style_parts.append(f"gap:{int(gap)}px")
 
-        # padding
-        p_top = int(element.get("paddingTop", 0))
-        p_right = int(element.get("paddingRight", 0))
-        p_bottom = int(element.get("paddingBottom", 0))
-        p_left = int(element.get("paddingLeft", 0))
+        # padding with optional horizontal normalization
+        p_top = int(element.get("paddingTop", 0) or 0)
+        p_right = int(element.get("paddingRight", 0) or 0)
+        p_bottom = int(element.get("paddingBottom", 0) or 0)
+        p_left = int(element.get("paddingLeft", 0) or 0)
         if any([p_top, p_right, p_bottom, p_left]):
+            # base padding shorthand
             style_parts.append(f"padding:{p_top}px {p_right}px {p_bottom}px {p_left}px")
+            # horizontal padding normalization by policy
+            apply_norm = False
+            if HPAD_MODE in ("trim", "clamp") and (p_left > 0 or p_right > 0):
+                if HPAD_SCOPE == 'all':
+                    apply_norm = True
+                elif HPAD_SCOPE == 'wrapper_only':
+                    apply_norm = is_wrapper_like(element, p_left, p_right)
+            if apply_norm and abs(p_left - p_right) <= HPAD_SYMM_TOL_PX:
+                if HPAD_MODE == "trim" and max(p_left, p_right) >= HPAD_TRIM_MIN_PX:
+                    # override left/right to 0
+                    style_parts.append("padding-left:0")
+                    style_parts.append("padding-right:0")
+                elif HPAD_MODE == "clamp":
+                    # clamp between min px and original, preferred HPAD_CLAMP_VW vw
+                    pr = max(p_right, 0)
+                    pl = max(p_left, 0)
+                    if pr > 0:
+                        style_parts.append(f"padding-right:clamp({HPAD_CLAMP_MIN_PX}px, {HPAD_CLAMP_VW}vw, {pr}px)")
+                    if pl > 0:
+                        style_parts.append(f"padding-left:clamp({HPAD_CLAMP_MIN_PX}px, {HPAD_CLAMP_VW}vw, {pl}px)")
 
         # alignment
         primary = element.get("primaryAxisAlignItems", "MIN")
@@ -955,9 +1089,9 @@ def generate_layout_class(layout_info):
         classes.append("layout-2col")
         
         # 精密な比率情報があれば追加
-        if layout_info.get("ratios"):
+        if layout_info.get("ratios") and layout_info.get("layout_mode") == "HORIZONTAL":
             ratio = layout_info["ratios"][0]
-            if ratio == "1:1":
+            if ratio == "1:1" and DETECT_EQUAL_2COL:
                 classes.append("layout-2col-equal")
             elif ratio == "1:2":
                 classes.append("layout-2col-1-2")
@@ -1022,26 +1156,43 @@ if USE_IMAGES:
     try:
         image_ids = collect_image_node_ids(target_frame)
         print(f"[LOG] Image nodes detected: {len(image_ids)}")
-        url_map = fetch_figma_image_urls(FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
         # 共通のimagesディレクトリを使用（OUTPUT_DIRの直下）
         base_output_dir = os.path.join(OUTPUT_DIR, os.path.basename(os.path.dirname(project_dir)))
         images_dir = os.path.join(base_output_dir, "images")
-        if DOWNLOAD_IMAGES:
-            IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT)
-        else:
-            # ローカルがあれば優先、無ければCDN
+
+        if USE_LOCAL_IMAGES_ONLY:
+            # オフライン/ローカル参照のみ: 既存ファイルがあればそれをマッピング
             tmp_map = {}
-            for nid, url in url_map.items():
-                if not nid or not url:
+            for nid in image_ids:
+                if not nid:
                     continue
                 safe_id = css_safe_identifier(nid)
                 filename = f"{safe_id}.{IMAGE_FORMAT}"
                 abs_path = os.path.join(images_dir, filename)
                 if os.path.exists(abs_path):
                     tmp_map[nid] = os.path.join("../images", filename)
-                else:
-                    tmp_map[nid] = url
             IMAGE_URL_MAP = tmp_map
+            if not IMAGE_URL_MAP:
+                print("[LOG] No local images found; will use placeholders where needed.")
+        else:
+            # オンライン: URL取得 → ダウンロード or CDN参照
+            url_map = fetch_figma_image_urls(FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
+            if DOWNLOAD_IMAGES:
+                IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT)
+            else:
+                # ローカルがあれば優先、無ければCDN
+                tmp_map = {}
+                for nid, url in url_map.items():
+                    if not nid or not url:
+                        continue
+                    safe_id = css_safe_identifier(nid)
+                    filename = f"{safe_id}.{IMAGE_FORMAT}"
+                    abs_path = os.path.join(images_dir, filename)
+                    if os.path.exists(abs_path):
+                        tmp_map[nid] = os.path.join("../images", filename)
+                    else:
+                        tmp_map[nid] = url
+                IMAGE_URL_MAP = tmp_map
     except Exception as e:
         print(f"[WARN] Image export failed: {e}")
 else:
@@ -1049,7 +1200,7 @@ else:
 
 # フォント情報抽出関数
 def extract_text_styles(text_element, figma_styles=None):
-    """テキスト要素からフォント情報を抽出（Figmaスタイル優先）"""
+    """テキスト要素からフォント情報を抽出（実際の計算済み値を優先、Figmaスタイル名も記録）"""
     style_info = {
         "font_family": "Arial, sans-serif",  # デフォルト
         "font_size": 16,
@@ -1078,55 +1229,368 @@ def extract_text_styles(text_element, figma_styles=None):
         if style_name:
             style_info["figma_style_name"] = style_name
     
-    # 2. style プロパティから情報取得（Figmaスタイルがない場合のフォールバック）
+    # 2. style プロパティから情報取得（実際の計算済み値を優先使用）
     style = text_element.get("style", {})
+
+    # Figmaスタイル名に関係なく、常に実際の計算済み値（Auto Layout調整後）を使用
+    if "fontFamily" in style:
+        font_family = style["fontFamily"]
+        # FigmaフォントをWeb安全フォントにマッピング
+        font_mapping = {
+            "Noto Sans JP": "\"Noto Sans JP\", \"Hiragino Kaku Gothic ProN\", \"Hiragino Sans\", Meiryo, sans-serif",
+            "Yu Gothic": "\"Yu Gothic\", \"Hiragino Kaku Gothic ProN\", Meiryo, sans-serif",
+            "Hiragino Sans": "\"Hiragino Sans\", \"Hiragino Kaku Gothic ProN\", Meiryo, sans-serif",
+            "Inter": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
+            "Roboto": "Roboto, -apple-system, BlinkMacSystemFont, sans-serif"
+        }
+        style_info["font_family"] = font_mapping.get(font_family, f"\"{font_family}\", sans-serif")
+
+    if "fontSize" in style:
+        style_info["font_size"] = style["fontSize"]
+
+    if "fontWeight" in style:
+        style_info["font_weight"] = style["fontWeight"]
+
+    if "lineHeightPx" in style:
+        # 行間をfont-sizeとの比率で計算
+        line_height_px = style["lineHeightPx"]
+        font_size = style_info["font_size"]
+        style_info["line_height"] = round(line_height_px / font_size, 2)
+    elif "lineHeightPercent" in style:
+        style_info["line_height"] = style["lineHeightPercent"] / 100
+
+    if "letterSpacing" in style:
+        style_info["letter_spacing"] = style["letterSpacing"]
+
+    if "textAlignHorizontal" in style:
+        align_mapping = {
+            "LEFT": "left",
+            "CENTER": "center",
+            "RIGHT": "right",
+            "JUSTIFIED": "justify"
+        }
+        style_info["text_align"] = align_mapping.get(style["textAlignHorizontal"], "left")
     
-    # Figmaスタイルが適用されていない場合のみ、個別スタイルを適用
-    if not style_info.get("figma_style_name"):
-        if "fontFamily" in style:
-            font_family = style["fontFamily"]
-            # FigmaフォントをWeb安全フォントにマッピング
-            font_mapping = {
-                "Noto Sans JP": "\"Noto Sans JP\", \"Hiragino Kaku Gothic ProN\", \"Hiragino Sans\", Meiryo, sans-serif",
-                "Yu Gothic": "\"Yu Gothic\", \"Hiragino Kaku Gothic ProN\", Meiryo, sans-serif", 
-                "Hiragino Sans": "\"Hiragino Sans\", \"Hiragino Kaku Gothic ProN\", Meiryo, sans-serif",
-                "Inter": "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
-                "Roboto": "Roboto, -apple-system, BlinkMacSystemFont, sans-serif"
-            }
-            style_info["font_family"] = font_mapping.get(font_family, f"\"{font_family}\", sans-serif")
+    # paragraph spacing (px)
+    if "paragraphSpacing" in style:
+        try:
+            ps = float(style.get("paragraphSpacing", 0) or 0)
+            if ps > 0:
+                style_info["paragraph_spacing"] = int(round(ps))
+        except Exception:
+            pass
     
-        if "fontSize" in style:
-            style_info["font_size"] = style["fontSize"]
-        
-        if "fontWeight" in style:
-            style_info["font_weight"] = style["fontWeight"]
-        
-        if "lineHeightPx" in style:
-            # 行間をfont-sizeとの比率で計算
-            line_height_px = style["lineHeightPx"]
-            font_size = style_info["font_size"]
-            style_info["line_height"] = round(line_height_px / font_size, 2)
-        elif "lineHeightPercent" in style:
-            style_info["line_height"] = style["lineHeightPercent"] / 100
-        
-        if "letterSpacing" in style:
-            style_info["letter_spacing"] = style["letterSpacing"]
-        
-        if "textAlignHorizontal" in style:
-            align_mapping = {
-                "LEFT": "left",
-                "CENTER": "center", 
-                "RIGHT": "right",
-                "JUSTIFIED": "justify"
-            }
-            style_info["text_align"] = align_mapping.get(style["textAlignHorizontal"], "left")
+    # text decoration
+    td = (style.get("textDecoration") or "").upper()
+    if td in ("UNDERLINE", "STRIKETHROUGH", "NONE"):
+        style_info["text_decoration"] = {
+            "UNDERLINE": "underline",
+            "STRIKETHROUGH": "line-through",
+            "NONE": "none"
+        }.get(td, None)
     
-    # テキストの色情報（fillsの最前面SOLIDを使用、opacity考慮）
-    rgba = _pick_solid_fill_rgba(text_element)
+    # text case → text-transform
+    tc = (style.get("textCase") or "").upper()
+    if tc in ("UPPER", "LOWER", "TITLE"):
+        style_info["text_transform"] = {
+            "UPPER": "uppercase",
+            "LOWER": "lowercase",
+            "TITLE": "capitalize"
+        }.get(tc)
+    
+    # italic
+    if style.get("italic") is True or (str(style.get("fontStyle", "")).lower() == "italic"):
+        style_info["font_style"] = "italic"
+    
+    # テキストの色情報（fillsから抽出、グラデーション対応）
+    rgba = _pick_solid_fill_rgba(text_element)  # 単色フォールバック用
     if rgba:
         style_info["color"] = rgba
     
     return style_info
+
+def extract_effects_styles(element):
+    """要素からEffects（シャドウ、ブラー）情報を抽出してCSS文字列を生成"""
+    effects = element.get("effects", []) or []
+    if not effects:
+        return ""
+
+    css_parts = []
+    box_shadows = []  # drop-shadow と inner-shadow を収集
+    filters = []      # blur effects用
+
+    for effect in effects:
+        if not effect.get("visible", True):
+            continue
+
+        effect_type = effect.get("type", "")
+
+        if effect_type == "DROP_SHADOW":
+            color = effect.get("color", {})
+            r = int(round(float(color.get("r", 0)) * 255))
+            g = int(round(float(color.get("g", 0)) * 255))
+            b = int(round(float(color.get("b", 0)) * 255))
+            a = float(color.get("a", 1))
+
+            offset = effect.get("offset", {})
+            x = float(offset.get("x", 0))
+            y = float(offset.get("y", 0))
+
+            radius = float(effect.get("radius", 0))
+            spread = float(effect.get("spread", 0))
+
+            shadow_str = f"{x}px {y}px {radius}px {spread}px rgba({r}, {g}, {b}, {a:.2f})"
+            box_shadows.append(shadow_str)
+
+        elif effect_type == "INNER_SHADOW":
+            color = effect.get("color", {})
+            r = int(round(float(color.get("r", 0)) * 255))
+            g = int(round(float(color.get("g", 0)) * 255))
+            b = int(round(float(color.get("b", 0)) * 255))
+            a = float(color.get("a", 1))
+
+            offset = effect.get("offset", {})
+            x = float(offset.get("x", 0))
+            y = float(offset.get("y", 0))
+
+            radius = float(effect.get("radius", 0))
+            spread = float(effect.get("spread", 0))
+
+            shadow_str = f"inset {x}px {y}px {radius}px {spread}px rgba({r}, {g}, {b}, {a:.2f})"
+            box_shadows.append(shadow_str)
+
+        elif effect_type == "LAYER_BLUR":
+            radius = float(effect.get("radius", 0))
+            if radius > 0:
+                filters.append(f"blur({radius}px)")
+
+        elif effect_type == "BACKGROUND_BLUR":
+            radius = float(effect.get("radius", 0))
+            if radius > 0:
+                # Background blur should use backdrop-filter
+                # Note: requires semi-transparent background to visualize properly
+                css_parts.append(f"backdrop-filter: blur({radius}px)")
+                css_parts.append(f"-webkit-backdrop-filter: blur({radius}px)")
+
+    # CSSプロパティとして出力
+    if box_shadows:
+        css_parts.append(f"box-shadow: {', '.join(box_shadows)}")
+
+    if filters:
+        css_parts.append(f"filter: {' '.join(filters)}")
+
+    return "; ".join(css_parts)
+
+def extract_fills_styles(element):
+    """要素からFills（背景色・グラデーション）情報を抽出してCSS文字列を生成"""
+    fills = element.get("fills", []) or []
+    if not fills:
+        return ""
+
+    node_opacity = float(element.get("opacity", 1))
+    css_parts = []
+
+    # fillsは配列の後方が最前面（Figmaの仕様）
+    for idx, fill in enumerate(reversed(fills)):
+        if not isinstance(fill, dict):
+            continue
+        if fill.get("visible") is False:
+            continue
+
+        fill_type = fill.get("type", "")
+        fill_opacity = float(fill.get("opacity", 1))
+        alpha = max(0.0, min(1.0, fill_opacity * node_opacity))
+
+        if alpha <= 0:
+            continue
+
+        if fill_type == "SOLID":
+            color = fill.get("color", {})
+            r = int(round(float(color.get("r", 0)) * 255))
+            g = int(round(float(color.get("g", 0)) * 255))
+            b = int(round(float(color.get("b", 0)) * 255))
+            css_parts.append(f"background-color: rgba({r}, {g}, {b}, {alpha:.2f})")
+            break  # 最前面の塗りのみ使用
+
+        elif fill_type.startswith("GRADIENT_"):
+            gradient_stops = fill.get("gradientStops", [])
+            if not gradient_stops:
+                continue
+
+            gradient_colors = []
+            for stop in gradient_stops:
+                position = float(stop.get("position", 0)) * 100
+                stop_color = stop.get("color", {})
+                r = int(round(float(stop_color.get("r", 0)) * 255))
+                g = int(round(float(stop_color.get("g", 0)) * 255))
+                b = int(round(float(stop_color.get("b", 0)) * 255))
+                stop_alpha = float(stop_color.get("a", 1)) * alpha
+                gradient_colors.append(f"rgba({r}, {g}, {b}, {stop_alpha:.2f}) {position:.1f}%")
+
+            if gradient_colors:
+                # グラデーションの方向を計算（gradientHandlePositions使用）
+                handle_positions = fill.get("gradientHandlePositions", [])
+                if len(handle_positions) >= 2:
+                    start = handle_positions[0]
+                    end = handle_positions[1]
+
+                    # 角度計算（0度=右、90度=下）
+                    dx = end.get("x", 1) - start.get("x", 0)
+                    dy = end.get("y", 1) - start.get("y", 0)
+
+                    import math
+                    angle = math.atan2(dy, dx) * 180 / math.pi
+                    angle = (angle + 90) % 360  # CSS角度に調整
+                else:
+                    angle = 90  # デフォルト：上から下
+
+                if fill_type == "GRADIENT_LINEAR":
+                    gradient_css = f"linear-gradient({angle:.0f}deg, {', '.join(gradient_colors)})"
+                elif fill_type == "GRADIENT_RADIAL":
+                    gradient_css = f"radial-gradient(circle, {', '.join(gradient_colors)})"
+                elif fill_type == "GRADIENT_ANGULAR":
+                    gradient_css = f"conic-gradient(from {angle:.0f}deg, {', '.join(gradient_colors)})"
+                else:
+                    # GRADIENT_DIAMOND等はlinear-gradientにフォールバック
+                    gradient_css = f"linear-gradient({angle:.0f}deg, {', '.join(gradient_colors)})"
+
+                # 可能ならベースとなるSOLID塗りも反映（Figmaの下層フィル）
+                base_color_css = None
+                try:
+                    # fills は下→上の順序。最下層から最初のSOLIDをベース色に。
+                    for base in fills:
+                        if isinstance(base, dict) and base.get("visible", True) and base.get("type") == "SOLID":
+                            bc = base.get("color", {}) or {}
+                            br = int(round(float(bc.get("r", 0)) * 255))
+                            bg = int(round(float(bc.get("g", 0)) * 255))
+                            bb = int(round(float(bc.get("b", 0)) * 255))
+                            ba = float(bc.get("a", 1)) * node_opacity
+                            base_color_css = f"background-color: rgba({br}, {bg}, {bb}, {ba:.2f})"
+                            break
+                except Exception:
+                    base_color_css = None
+
+                if base_color_css:
+                    css_parts.append(base_color_css)
+                css_parts.append(f"background: {gradient_css}")
+                break  # 最前面の塗りのみ使用
+
+        # IMAGE fillsは既存処理に委譲（background-image）
+
+    return "; ".join(css_parts)
+
+def _pick_solid_stroke_rgba(element):
+    """Pick the top-most visible SOLID stroke color as rgba string."""
+    strokes = element.get("strokes", []) or []
+    if not isinstance(strokes, list):
+        return None
+    node_opacity = float(element.get("opacity", 1))
+    for p in reversed(strokes):
+        if not isinstance(p, dict):
+            continue
+        if p.get("visible") is False:
+            continue
+        if p.get("type") != "SOLID":
+            continue
+        paint_opacity = float(p.get("opacity", 1))
+        color = p.get("color", {}) or {}
+        r = int(round(float(color.get("r", 0)) * 255))
+        g = int(round(float(color.get("g", 0)) * 255))
+        b = int(round(float(color.get("b", 0)) * 255))
+        a = float(color.get("a", 1))
+        alpha = max(0.0, min(1.0, a * paint_opacity * node_opacity))
+        if alpha <= 0:
+            continue
+        return f"rgba({r}, {g}, {b}, {alpha:.2f})"
+    return None
+
+def extract_stroke_and_radius_styles(element):
+    """Extract CSS for border (stroke) and border-radius from a Figma element."""
+    css_parts = []
+    # Stroke → border
+    try:
+        stroke_color = _pick_solid_stroke_rgba(element)
+        dash = element.get("dashPattern") or element.get("strokeDashes")
+        has_dash = isinstance(dash, list) and len(dash) > 0
+        # Individual side weights if available
+        t = element.get("strokeTopWeight")
+        r = element.get("strokeRightWeight")
+        b = element.get("strokeBottomWeight")
+        l = element.get("strokeLeftWeight")
+        side_present = any(isinstance(x, (int, float)) and x > 0 for x in [t, r, b, l])
+        if stroke_color and side_present:
+            if isinstance(t, (int, float)) and t > 0:
+                css_parts.append(f"border-top:{int(round(t))}px {'dashed' if has_dash else 'solid'} {stroke_color}")
+            if isinstance(r, (int, float)) and r > 0:
+                css_parts.append(f"border-right:{int(round(r))}px {'dashed' if has_dash else 'solid'} {stroke_color}")
+            if isinstance(b, (int, float)) and b > 0:
+                css_parts.append(f"border-bottom:{int(round(b))}px {'dashed' if has_dash else 'solid'} {stroke_color}")
+            if isinstance(l, (int, float)) and l > 0:
+                css_parts.append(f"border-left:{int(round(l))}px {'dashed' if has_dash else 'solid'} {stroke_color}")
+        else:
+            # uniform stroke
+            weight = element.get("strokeWeight")
+            if weight is None:
+                if element.get("strokes"):
+                    weight = 1
+            if stroke_color and isinstance(weight, (int, float)) and weight > 0:
+                css_parts.append(f"border:{int(round(weight))}px {'dashed' if has_dash else 'solid'} {stroke_color}")
+    except Exception:
+        pass
+    # Corner radius → border-radius
+    try:
+        if element.get("cornerRadius") is not None and isinstance(element.get("cornerRadius"), (int, float)):
+            cr = float(element.get("cornerRadius", 0) or 0)
+            if cr > 0:
+                css_parts.append(f"border-radius:{int(round(cr))}px")
+        else:
+            radii = element.get("rectangleCornerRadii") or element.get("cornerRadii")
+            # Some schemas may provide named radii; accept list of 4
+            if isinstance(radii, (list, tuple)) and len(radii) == 4:
+                tl, tr, br, bl = [max(0, float(x or 0)) for x in radii]
+                if any([tl, tr, br, bl]):
+                    css_parts.append(f"border-radius:{int(round(tl))}px {int(round(tr))}px {int(round(br))}px {int(round(bl))}px")
+            else:
+                # Named per-corner
+                tl = element.get("topLeftRadius")
+                tr = element.get("topRightRadius")
+                br = element.get("bottomRightRadius")
+                bl = element.get("bottomLeftRadius")
+                corners = [tl, tr, br, bl]
+                if any(isinstance(x, (int, float)) and x > 0 for x in corners):
+                    tl = int(round(max(0, float(tl or 0))))
+                    tr = int(round(max(0, float(tr or 0))))
+                    br = int(round(max(0, float(br or 0))))
+                    bl = int(round(max(0, float(bl or 0))))
+                    css_parts.append(f"border-radius:{tl}px {tr}px {br}px {bl}px")
+    except Exception:
+        pass
+    return "; ".join(css_parts)
+
+def extract_blend_mode_style(element):
+    """Map Figma blendMode to CSS mix-blend-mode if applicable."""
+    mode = (element.get("blendMode") or "").upper()
+    mapping = {
+        "MULTIPLY": "multiply",
+        "SCREEN": "screen",
+        "OVERLAY": "overlay",
+        "DARKEN": "darken",
+        "LIGHTEN": "lighten",
+        "COLOR_DODGE": "color-dodge",
+        "COLOR_BURN": "color-burn",
+        "HARD_LIGHT": "hard-light",
+        "SOFT_LIGHT": "soft-light",
+        "DIFFERENCE": "difference",
+        "EXCLUSION": "exclusion",
+        "HUE": "hue",
+        "SATURATION": "saturation",
+        "COLOR": "color",
+        "LUMINOSITY": "luminosity",
+    }
+    css = mapping.get(mode)
+    if css:
+        return f"mix-blend-mode:{css}"
+    return ""
 
 def generate_semantic_class(element_name, element_type="", style_info=None, element_context=None):
     """レイヤー名から意味のあるクラス名を生成"""
@@ -1384,17 +1848,17 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
             # layoutGrowが指定されている場合はそれを使用（縮小禁止）
             styles.append(f"flex:{layout_grow} 0 0")
         else:
-            # 親のレイアウト情報から適切な比率を取得
-            flex_ratio = 1  # デフォルト均等分割
-            if parent_layout_info and parent_layout_info.get("type") == "two-column":
-                ratios = parent_layout_info.get("ratios", [])
-                if len(ratios) >= 2:
-                    # 2カラムの比率情報を使用（例：[1, 2] → 1:2の比率）
-                    child_index = 0  # 実際の子要素順序は別途取得が必要
-                    if child_index < len(ratios):
-                        flex_ratio = ratios[child_index]
-            # grow=0の場合は適切な比率で縮小禁止（画像見切れ防止）
-            styles.append(f"flex:{flex_ratio} 0 auto")
+            if not STOP_CHILD_EQUALIZE:
+                # 親のレイアウト情報から適切な比率を取得
+                flex_ratio = 1  # デフォルト均等分割
+                if parent_layout_info and parent_layout_info.get("type") == "two-column":
+                    ratios = parent_layout_info.get("ratios", [])
+                    if len(ratios) >= 2:
+                        # 2カラムの比率情報を使用（例：[1, 2] → 1:2の比率）
+                        child_index = 0  # 実際の子要素順序は別途取得が必要
+                        if child_index < len(ratios):
+                            flex_ratio = ratios[child_index]
+                styles.append(f"flex:{flex_ratio} 0 auto")
     elif parent_layout_mode == "VERTICAL":
         # 垂直レイアウト内では高さを柔軟にする
         skip_h = True
@@ -1449,11 +1913,39 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             figma_class = style_info["figma_style_name"].lower().replace(" ", "-").replace("/", "-")
             classes.append(f"figma-style-{figma_class}")
         style_class = " ".join(dict.fromkeys(classes))
-        
+
+        # テキスト要素のinline style生成（エフェクトのみ、背景色は適用しない）
+        text_style_parts = []
+
+        # Note: テキストのfillsは文字色として使用（extract_text_stylesで処理済み）
+        # 背景色はテキスト要素には適用しない（Figmaの仕様に合わせる）
+
+        # Effects（シャドウ、ブラー）の適用
+        effects_style = extract_effects_styles(element)
+        if effects_style:
+            text_style_parts.append(effects_style)
+
+        # inline styleの生成
+        inline_style = "; ".join(text_style_parts) if text_style_parts else ""
+        style_attr = f' style="{inline_style}"' if inline_style else ""
+
         # 見出しレベルの判定
         tag_name = detect_heading_level(element)
-        
-        return f'{indent}<{tag_name} class="{style_class}">{text_content}</{tag_name}>\n'
+
+        # ノード固有の色をCSSに出力し、テキスト要素にもノードクラスを付与（Figmaスタイル色の誤適用回避）
+        node_id = element.get("id")
+        node_safe = css_safe_identifier(node_id) if node_id else None
+        node_class = f"n-{node_safe}" if node_safe else None
+        if node_safe:
+            set_node_kind(node_id, 'text')
+            # set color per node
+            color = style_info.get("color")
+            if color:
+                add_node_styles(node_safe, [f"color: {color}"])
+        if node_class:
+            style_class = f"{style_class} {node_class}"
+
+        return f'{indent}<{tag_name} class="{style_class}"{style_attr}>{text_content}</{tag_name}>\n'
     
     # コンテナ（子を持つ要素）は常にコンテナとして扱う（画像fillがあっても背景として扱う）
     children = element.get("children", []) or element.get("elements", []) or []
@@ -1481,12 +1973,78 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                 node_id = element.get("id", "")
                 src = IMAGE_URL_MAP.get(node_id)
                 if src:
-                    # 背景画像は親要素（wrapper）に適用
-                    background_wrapper_style.append(f"background-image:url('{src}')")
-                    # 元要素の高さも背景wrapper要素に移動
-                    if h and isinstance(h, (int, float)) and h > 0:
-                        background_wrapper_style.append(f"height:{int(h)}px")
-                    # bg_style には何も追加しない（元要素には背景画像を適用しない）
+                    # 背景レイヤー合成（画像 + グラデーション + ベース色）をwrapperに適用
+                    try:
+                        fills = element.get("fills", []) or []
+                        node_opacity = float(element.get("opacity", 1))
+                        layers = []
+                        base_color_css = None
+                        # top-most first for CSS background layering
+                        for f in reversed(fills):
+                            if not isinstance(f, dict) or f.get("visible") is False:
+                                continue
+                            ftype = f.get("type")
+                            if ftype == "IMAGE":
+                                # 画像はURL1つで近似
+                                layers.append(f"url('{src}')")
+                            elif ftype and ftype.startswith("GRADIENT_"):
+                                stops = f.get("gradientStops", []) or []
+                                if not stops:
+                                    continue
+                                cols = []
+                                for stop in stops:
+                                    pos = float(stop.get("position", 0)) * 100
+                                    c = stop.get("color", {}) or {}
+                                    rr = int(round(float(c.get("r", 0)) * 255))
+                                    gg = int(round(float(c.get("g", 0)) * 255))
+                                    bb = int(round(float(c.get("b", 0)) * 255))
+                                    aa = float(c.get("a", 1)) * node_opacity
+                                    cols.append(f"rgba({rr}, {gg}, {bb}, {aa:.2f}) {pos:.1f}%")
+                                angle = 90
+                                try:
+                                    hp = f.get("gradientHandlePositions", [])
+                                    if len(hp) >= 2:
+                                        dx = float(hp[1].get("x", 1)) - float(hp[0].get("x", 0))
+                                        dy = float(hp[1].get("y", 1)) - float(hp[0].get("y", 0))
+                                        import math
+                                        angle = (math.degrees(math.atan2(dy, dx)) + 90) % 360
+                                except Exception:
+                                    pass
+                                if ftype == "GRADIENT_LINEAR":
+                                    layers.append(f"linear-gradient({angle:.0f}deg, {', '.join(cols)})")
+                                elif ftype == "GRADIENT_RADIAL":
+                                    layers.append(f"radial-gradient(circle, {', '.join(cols)})")
+                                elif ftype == "GRADIENT_ANGULAR":
+                                    layers.append(f"conic-gradient(from {angle:.0f}deg, {', '.join(cols)})")
+                                else:
+                                    layers.append(f"linear-gradient({angle:.0f}deg, {', '.join(cols)})")
+                            elif ftype == "SOLID" and base_color_css is None:
+                                c = f.get("color", {}) or {}
+                                rr = int(round(float(c.get("r", 0)) * 255))
+                                gg = int(round(float(c.get("g", 0)) * 255))
+                                bb = int(round(float(c.get("b", 0)) * 255))
+                                aa = float(c.get("a", 1)) * node_opacity
+                                base_color_css = f"background-color: rgba({rr}, {gg}, {bb}, {aa:.2f})"
+                        # 反映
+                        if base_color_css:
+                            background_wrapper_style.append(base_color_css)
+                        if layers:
+                            background_wrapper_style.append(f"background: {', '.join(layers)}")
+                        # 元要素の高さも背景wrapper要素に移動
+                        if h and isinstance(h, (int, float)) and h > 0:
+                            if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and w and isinstance(w, (int, float)) and w > 0:
+                                # prefer aspect ratio over fixed height
+                                background_wrapper_style.append(f"aspect-ratio:{int(w)}/{int(h)}")
+                            elif not SUPPRESS_FIXED_HEIGHT:
+                                background_wrapper_style.append(f"height:{int(h)}px")
+                    except Exception:
+                        # フォールバック：従来通り画像のみ
+                        background_wrapper_style.append(f"background-image:url('{src}')")
+                        if h and isinstance(h, (int, float)) and h > 0:
+                            if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and w and isinstance(w, (int, float)) and w > 0:
+                                background_wrapper_style.append(f"aspect-ratio:{int(w)}/{int(h)}")
+                            elif not SUPPRESS_FIXED_HEIGHT:
+                                background_wrapper_style.append(f"height:{int(h)}px")
 
         # Auto Layoutをinline styleで反映
         inline_style = map_auto_layout_inline_styles(element)
@@ -1566,17 +2124,38 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         # 固定サイズの出力（Auto Layoutの意図を尊重）
         # 背景コンテナは固定px幅を出さない（フルブリード化する）
         if isinstance(w, (int, float)) and w > 0 and add_w and not has_image_fill:
-            # Auto Layout環境では固定幅を避ける傾向
-            if parent_layout_mode or own_layout_mode:
-                # min-widthとして出力してレスポンシブ性を保持
-                style_parts.append(f"min-width:{int(w)}px")
-            else:
-                style_parts.append(f"width:{int(w)}px")
+            if not SUPPRESS_CONTAINER_WIDTH:
+                # Auto Layout環境では固定幅を避ける傾向
+                if parent_layout_mode or own_layout_mode:
+                    # min-widthとして出力してレスポンシブ性を保持
+                    style_parts.append(f"min-width:{int(w)}px")
+                else:
+                    style_parts.append(f"width:{int(w)}px")
         if isinstance(h, (int, float)) and h > 0 and add_h and not (has_image_fill and USE_IMAGES and background_wrapper_style):
             # 高さは常にmin-heightを優先（コンテンツで伸びることを許可）
             style_parts.append(f"min-height:{int(h)}px")
         if bg_style:
             style_parts.extend(bg_style)
+
+        # 背景色・グラデーション（IMAGE以外）の適用
+        if not has_image_fill:
+            fills_style = extract_fills_styles(element)
+            if fills_style:
+                style_parts.append(fills_style)
+        # Stroke / corner radius
+        sr = extract_stroke_and_radius_styles(element)
+        if sr:
+            style_parts.append(sr)
+        # Blend mode
+        bm = extract_blend_mode_style(element)
+        if bm:
+            style_parts.append(bm)
+
+        # Effects（シャドウ、ブラー）の適用
+        effects_style = extract_effects_styles(element)
+        if effects_style:
+            style_parts.append(effects_style)
+
         # クリップ有効時は隠す
         if element.get("clipsContent"):
             style_parts.append("overflow:hidden")
@@ -1585,38 +2164,152 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         node_safe = css_safe_identifier(node_id) if node_id else None
         node_class = f"n-{node_safe}" if node_safe else None
         if node_class and style_parts:
+            set_node_kind(node_id, 'container')
             add_node_styles(node_safe, [p for p in style_parts if p])
 
-        # クラス結合
+        # クラス結合（semantic + layout + node-specific）
         all_classes = [frame_class]
         if layout_class:
             all_classes.append(layout_class)
         if node_class:
             all_classes.append(node_class)
-        # クラス名を結合
-        all_classes = [frame_class]
-        if layout_class:
-            all_classes.append(layout_class)
         # 背景画像がある場合は、bg-fullbleedクラスを元要素には追加しない
         final_class = " ".join(all_classes)
 
-        # 背景画像がある場合は親要素（wrapper）を追加
+        # 背景画像がある場合は親要素（wrapper）を追加（ポリシー: content|none）
         if has_image_fill and USE_IMAGES and background_wrapper_style:
+            # Ensure single image covers full width without tiling
+            try:
+                background_wrapper_style.append('background-repeat:no-repeat')
+                background_wrapper_style.append('background-size:cover')
+                background_wrapper_style.append('background-position:center')
+            except Exception:
+                pass
+            # Apply border-radius to wrapper if element has it
+            try:
+                sr = extract_stroke_and_radius_styles(element) or ''
+                if 'border-radius' in sr:
+                    # extract just border-radius value
+                    for part in sr.split(';'):
+                        part = part.strip()
+                        if part.startswith('border-radius'):
+                            background_wrapper_style.append(part)
+                            background_wrapper_style.append('overflow:hidden')
+            except Exception:
+                pass
             wrapper_style = "; ".join(background_wrapper_style)
             html = f'{indent}<div class="bg-fullbleed" style="{wrapper_style}">\n'
-            html += f'{indent}  <div class="{final_class}">\n'
-            content_indent = indent + "    "
-            closing_html = f'{indent}  </div>\n{indent}</div>\n'
+            if BG_FULLBLEED_INNER == "content":
+                html += f'{indent}  <div class="content-width-container">\n'
+                html += f'{indent}    <div class="{final_class}">\n'
+                content_indent = indent + "      "
+                closing_html = f'{indent}    </div>\n{indent}  </div>\n{indent}</div>\n'
+            else:
+                html += f'{indent}  <div class="{final_class}">\n'
+                content_indent = indent + "    "
+                closing_html = f'{indent}  </div>\n{indent}</div>\n'
         else:
             html = f'{indent}<div class="{final_class}">\n'
             content_indent = indent + "  "
             closing_html = f'{indent}</div>\n'
+
+        # 2カラム: Auto Layout配分で子幅を割り当て（優先）
+        if USE_AL_RATIO_2COL and layout_info.get("type") == "two-column" and (element.get("layoutMode") or "").upper() == "HORIZONTAL":
+            try:
+                direct_children = element.get("children", []) or []
+                dc = [c for c in direct_children if isinstance(c, dict)]
+                if len(dc) == 2:
+                    # Parent inner width = parent width - paddingL/R - gap
+                    b = element.get("absoluteBoundingBox") or {}
+                    pw = float(b.get("width") or 0)
+                    p_left = float(element.get("paddingLeft", 0) or 0)
+                    p_right = float(element.get("paddingRight", 0) or 0)
+                    gap = float(element.get("itemSpacing", 0) or 0)
+                    inner = max(0.0, pw - p_left - p_right - gap)
+                    # Child sizing
+                    fixed = []
+                    weights = []
+                    for ch in dc:
+                        cb = ch.get("absoluteBoundingBox") or {}
+                        cw = float(cb.get("width") or 0)
+                        sizing = (ch.get("layoutSizingHorizontal") or "").upper()
+                        grow = float(ch.get("layoutGrow") or 0)
+                        if sizing == "FIXED":
+                            fixed.append(cw)
+                            weights.append(0.0)
+                        elif sizing == "FILL":
+                            fixed.append(0.0)
+                            weights.append(grow if grow > 0 else 1.0)
+                        else:  # HUG or undefined → treat as fixed content width
+                            fixed.append(cw)
+                            weights.append(0.0)
+                    total_fixed = sum(fixed)
+                    rem = max(0.0, inner - total_fixed)
+                    total_w = sum(weights)
+                    widths = []
+                    for i in range(2):
+                        extra = (rem * (weights[i] / total_w)) if total_w > 0 else 0.0
+                        widths.append(fixed[i] + extra)
+                    if inner > 0 and (widths[0] > 0 or widths[1] > 0):
+                        p0 = max(0.0, min(100.0, (widths[0] / inner) * 100.0))
+                        p1 = max(0.0, min(100.0, 100.0 - p0))
+                        for child, percent in zip(dc, (p0, p1)):
+                            cid = child.get("id")
+                            if cid:
+                                safe = css_safe_identifier(cid)
+                                add_node_styles(safe, [f"flex: 0 0 {percent:.2f}%", "min-width:0"]) 
+            except Exception as e:
+                print(f"[WARN] 2col AL ratio mapping failed: {e}")
+
+        # 2カラムのABB比率を使用して子幅を割り当て（フォールバック）
+        if USE_ABB_RATIO_2COL and layout_info.get("type") == "two-column":
+            try:
+                direct_children = element.get("children", []) or []
+                dc = [c for c in direct_children if isinstance(c, dict)]
+                if len(dc) == 2:
+                    w0 = float(((dc[0].get("absoluteBoundingBox") or {}).get("width") or 0))
+                    w1 = float(((dc[1].get("absoluteBoundingBox") or {}).get("width") or 0))
+                    total = w0 + w1
+                    if total > 0:
+                        p0 = max(0.0, min(100.0, (w0 / total) * 100.0))
+                        p1 = max(0.0, min(100.0, (w1 / total) * 100.0))
+                        for child, percent in zip(dc, (p0, p1)):
+                            cid = child.get("id")
+                            if cid:
+                                safe = css_safe_identifier(cid)
+                                add_node_styles(safe, [f"flex: 0 0 {percent:.2f}%", "min-width:0"]) 
+            except Exception as e:
+                print(f"[WARN] 2col ABB ratio mapping failed: {e}")
         # 子の画像抑制ポリシー
         child_suppress = suppress_leaf_images
         parent_bounds = suppress_parent_bounds
         if IMAGE_CONTAINER_SUPPRESS_LEAFS and has_image_fill and USE_IMAGES:
             child_suppress = True
             parent_bounds = _bounds(element)
+
+        # Infer margins between siblings for non Auto Layout parents
+        if INFER_SIBLING_MARGINS and (own_layout_mode or 'NONE').upper() == 'NONE':
+            try:
+                sibs = [c for c in (element.get('children') or []) if isinstance(c, dict)]
+                sibs_sorted = sorted(sibs, key=lambda c: ((c.get('absoluteBoundingBox') or {}).get('y') or 0))
+                prev = None
+                for ch in sibs_sorted:
+                    if not prev:
+                        prev = ch
+                        continue
+                    ab_prev = prev.get('absoluteBoundingBox') or {}
+                    ab_cur = ch.get('absoluteBoundingBox') or {}
+                    py = float(ab_prev.get('y') or 0.0)
+                    ph = float(ab_prev.get('height') or 0.0)
+                    cy = float(ab_cur.get('y') or 0.0)
+                    mt = int(round(cy - (py + ph)))
+                    if mt >= MARGIN_INFER_MIN_PX and mt <= MARGIN_INFER_MAX_PX:
+                        cid = ch.get('id')
+                        if cid:
+                            add_node_styles(css_safe_identifier(cid), [f'margin-top:{mt}px'])
+                    prev = ch
+            except Exception as e:
+                print(f"[WARN] Margin inference failed: {e}")
 
         for child in children:
             if should_exclude_node(child):
@@ -1636,7 +2329,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         bounds = _bounds(element)
         width = bounds.get("width", 100)
         height = bounds.get("height", 100)
-        
+
         # 画像要素かどうかをチェック
         if is_image_element(element):
             # 祖先コンテナが背景画像を持っている場合の抑制（重複回避）
@@ -1655,17 +2348,35 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             node_id = element.get("id", "")
             node_safe = css_safe_identifier(node_id) if node_id else None
             node_class = f"n-{node_safe}" if node_safe else None
-            # 固有サイズをCSSに委譲
-            # parent auto-layout rules may suppress fixed width/height
+            # 固有サイズをCSSに委譲（Auto Layoutの意図を尊重）
             child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = []
-            if not skip_w:
+            if not skip_w and not SUPPRESS_CONTAINER_WIDTH:
                 node_props.append(f"width: {int(width)}px")
             if not skip_h:
-                node_props.append(f"height: {int(height)}px")
+                if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and width and height:
+                    node_props.append(f"aspect-ratio: {int(width)}/{int(height)}")
+                elif not SUPPRESS_FIXED_HEIGHT:
+                    node_props.append(f"height: {int(height)}px")
+            # Border radius / stroke for image wrapper
+            sr = extract_stroke_and_radius_styles(element)
+            if sr:
+                node_props.append(sr)
+                # Clip inner image to rounded corners
+                if 'border-radius' in sr:
+                    node_props.append("overflow:hidden")
+            # Effects（シャドウ、ブラー）の適用
+            effects_style = extract_effects_styles(element)
+            if effects_style:
+                node_props.append(effects_style)
+            # Blend mode
+            bm = extract_blend_mode_style(element)
+            if bm:
+                node_props.append(bm)
             # include flex/align if any
             node_props.extend([s for s in child_styles if s])
             if node_safe:
+                set_node_kind(node_id, 'image')
                 add_node_styles(node_safe, node_props)
             if USE_IMAGES:
                 # 画像出力（ダウンロード済み or CDN URL）
@@ -1686,19 +2397,41 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                 return f'{indent}<div class="{" ".join(all_classes)}"></div>\n'
         else:
             # 通常の矩形要素
-            rgba = _pick_solid_fill_rgba(element)
-            bg_color = rgba if rgba else "#f0f0f0"
             node_id = element.get("id", "")
             node_safe = css_safe_identifier(node_id) if node_id else None
             node_class = f"n-{node_safe}" if node_safe else None
             child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
-            node_props = [f"background-color: {bg_color}"]
-            if not skip_w:
+
+            # 背景色・グラデーション処理
+            fills_style = extract_fills_styles(element)
+            node_props = []
+            if fills_style:
+                node_props.append(fills_style)
+            else:
+                # フォールバック背景色
+                node_props.append("background-color: #f0f0f0")
+            if not skip_w and not SUPPRESS_CONTAINER_WIDTH:
                 node_props.append(f"width: {int(width)}px")
             if not skip_h:
-                node_props.append(f"height: {int(height)}px")
+                if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and width and height:
+                    node_props.append(f"aspect-ratio: {int(width)}/{int(height)}")
+                elif not SUPPRESS_FIXED_HEIGHT:
+                    node_props.append(f"height: {int(height)}px")
+            # Stroke / corner radius
+            sr = extract_stroke_and_radius_styles(element)
+            if sr:
+                node_props.append(sr)
+            # Effects（シャドウ、ブラー）の適用
+            effects_style = extract_effects_styles(element)
+            if effects_style:
+                node_props.append(effects_style)
+            # Blend mode
+            bm = extract_blend_mode_style(element)
+            if bm:
+                node_props.append(bm)
             node_props.extend([s for s in child_styles if s])
             if node_safe:
+                set_node_kind(node_id, 'rect')
                 add_node_styles(node_safe, node_props)
             classes = ["rect-element"]
             if node_class:
@@ -1708,6 +2441,69 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
     # ここまでで該当しない要素タイプ
     
     else:
+        # 線要素
+        if element_type == "LINE":
+            b = _bounds(element)
+            w = float(b.get("width", 0) or 0)
+            h = float(b.get("height", 0) or 0)
+            weight = float(element.get("strokeWeight") or 1)
+            color = _pick_solid_stroke_rgba(element) or "rgba(0,0,0,1)"
+            node_id = element.get("id", "")
+            node_safe = css_safe_identifier(node_id) if node_id else None
+            node_class = f"n-{node_safe}" if node_safe else None
+            dash = element.get("dashPattern") or element.get("strokeDashes")
+            has_dash = isinstance(dash, list) and len(dash) > 0
+            cap = (element.get("strokeCap") or "").upper()
+            # rotation
+            try:
+                rot = float(element.get("rotation", 0) or 0)
+            except Exception:
+                rot = 0.0
+            props = []
+            horiz_guess = (w >= h)
+            # If rotation is near axis-aligned, use border for crisp lines
+            if (abs(rot) < 0.01 or abs(abs(rot) - 180.0) < 0.01) and horiz_guess:
+                # horizontal line → use full width (responsive)
+                if cap == "ROUND":
+                    props.append("width:100%")
+                    hh = int(round(max(h, weight)))
+                    props.append(f"height:{hh}px")
+                    props.append(f"background-color:{color}")
+                    props.append(f"border-radius:{max(1, hh//2)}px")
+                else:
+                    props.append("width:100%")
+                    props.append("height:0")
+                    props.append(f"border-top:{int(round(max(h, weight)))}px {'dashed' if has_dash else 'solid'} {color}")
+            elif (abs(abs(rot) - 90.0) < 0.01 or abs(abs(rot) - 270.0) < 0.01) and not horiz_guess:
+                # vertical line
+                if cap == "ROUND":
+                    props.append(f"height:{int(round(h))}px")
+                    ww = int(round(max(w, weight)))
+                    props.append(f"width:{ww}px")
+                    props.append(f"background-color:{color}")
+                    props.append(f"border-radius:{max(1, ww//2)}px")
+                else:
+                    props.append("width:0")
+                    props.append(f"height:{int(round(h))}px")
+                    props.append(f"border-left:{int(round(max(w, weight)))}px {'dashed' if has_dash else 'solid'} {color}")
+            else:
+                # angled line fallback as rotated rectangle
+                props.append(f"width:{int(round(max(1.0, w)))}px")
+                props.append(f"height:{int(round(max(1.0, h, weight)))}px")
+                props.append(f"background-color:{color}")
+                if cap == "ROUND":
+                    rr = int(round(max(1.0, min(w, h, weight) / 2)))
+                    props.append(f"border-radius:{rr}px")
+                if abs(rot) > 0.01:
+                    props.append(f"transform:rotate({rot:.2f}deg)")
+                    props.append("transform-origin: left top")
+            if node_safe:
+                set_node_kind(node_id, 'line')
+                add_node_styles(node_safe, props)
+            classes = ["line"]
+            if node_class:
+                classes.append(node_class)
+            return f'{indent}<div class="{" ".join(classes)}"></div>\n'
         # その他の要素タイプでも画像チェック
         if is_image_element(element):
             bounds = element.get("absoluteBoundingBox", {})
@@ -1841,11 +2637,18 @@ img {{
     line-height: {style_info["line_height"]};
     letter-spacing: {style_info["letter_spacing"]}px;
     text-align: {style_info["text_align"]};
-    color: {style_info["color"]};
-    margin: 10px 0;
-}}
-
 '''
+        if style_info.get("text_decoration"):
+            css += f"    text-decoration: {style_info['text_decoration']};\n"
+        if style_info.get("text_transform"):
+            css += f"    text-transform: {style_info['text_transform']};\n"
+        if style_info.get("font_style"):
+            css += f"    font-style: {style_info['font_style']};\n"
+        if style_info.get("paragraph_spacing") is not None:
+            css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
+        else:
+            css += "    margin: 10px 0;\n"
+        css += "}\n\n\n"
     
     css += '''/* Semantic Component Styles */
 .hero {
@@ -1923,39 +2726,39 @@ img {{
     gap: 20px;
 }
 
-.layout-2col-equal > * {
+.layout-flex-row.layout-2col-equal > * {
     flex: 1;
 }
 
-.layout-2col-1-2 > *:first-child {
+.layout-flex-row.layout-2col-1-2 > *:first-child {
     flex: 1;
 }
 
-.layout-2col-1-2 > *:last-child {
+.layout-flex-row.layout-2col-1-2 > *:last-child {
     flex: 2;
 }
 
-.layout-2col-1-3 > *:first-child {
+.layout-flex-row.layout-2col-1-3 > *:first-child {
     flex: 1;
 }
 
-.layout-2col-1-3 > *:last-child {
+.layout-flex-row.layout-2col-1-3 > *:last-child {
     flex: 3;
 }
 
-.layout-2col-2-3 > *:first-child {
+.layout-flex-row.layout-2col-2-3 > *:first-child {
     flex: 2;
 }
 
-.layout-2col-2-3 > *:last-child {
+.layout-flex-row.layout-2col-2-3 > *:last-child {
     flex: 3;
 }
 
-.layout-2col-3-4 > *:first-child {
+.layout-flex-row.layout-2col-3-4 > *:first-child {
     flex: 3;
 }
 
-.layout-2col-3-4 > *:last-child {
+.layout-flex-row.layout-2col-3-4 > *:last-child {
     flex: 4;
 }
 
@@ -2017,17 +2820,20 @@ img {{
     .layout-text-image {
         flex-direction: column;
     }
-    
+    .layout-flex-row.layout-2col-1-2 > *,
+    .layout-flex-row.layout-2col-1-3 > *,
+    .layout-flex-row.layout-2col-2-3 > *,
+    .layout-flex-row.layout-2col-3-4 > *,
     .layout-2col-1-2 > *,
     .layout-2col-1-3 > *,
     .layout-2col-2-3 > *,
     .layout-2col-3-4 > * {
-        flex: 1;
+        flex: 1 1 auto;
+        min-width: 0;
+        width: auto;
     }
-    
-    .layout-4col {
-        grid-template-columns: 1fr;
-    }
+    .layout-3col > * { width: 100%; max-width: 100%; flex: 1 1 auto; }
+    .layout-4col { grid-template-columns: 1fr; }
 }
 
 /* Collected text styles (fallback) */
@@ -2050,10 +2856,17 @@ img {{
         if not style_info.get("figma_style_name"):
             css += f'''    color: {style_info["color"]};
 '''
-        css += '''    margin: 10px 0;
-}
-
-'''
+        if style_info.get("text_decoration"):
+            css += f"    text-decoration: {style_info['text_decoration']};\n"
+        if style_info.get("text_transform"):
+            css += f"    text-transform: {style_info['text_transform']};\n"
+        if style_info.get("font_style"):
+            css += f"    font-style: {style_info['font_style']};\n"
+        if style_info.get("paragraph_spacing") is not None:
+            css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
+        else:
+            css += "    margin: 10px 0;\n"
+        css += "}\n\n\n"
     
     css += '''/* Rectangle styles */
 .rect-element {
@@ -2105,6 +2918,10 @@ img {{
     css += '''}
 '''
 
+    # Optional: equalize 2-col when no ratio is specified
+    if EQUALIZE_2COL_FALLBACK:
+        css += '.layout-2col > * { flex: 1 1 0; min-width: 0; }\n\n'
+
     # ノード固有スタイルを出力（インライン削減）
     css += '/* Node-specific styles (generated) */\n'
     node_styles = node_styles or {}
@@ -2117,7 +2934,63 @@ img {{
 
 '''
 
+    # Final responsive overrides (placed after node-specific styles; no !important needed)
+    css += (
+        "@media (max-width: 768px) {\n"
+        "  .layout-2col, .layout-3col, .layout-4col, .layout-image-text, .layout-text-image { flex-direction: column; }\n"
+        "  .layout-flex-row.layout-2col-1-2 > *, .layout-flex-row.layout-2col-1-3 > *, .layout-flex-row.layout-2col-2-3 > *, .layout-flex-row.layout-2col-3-4 > *,\n"
+        "  .layout-2col-1-2 > *, .layout-2col-1-3 > *, .layout-2col-2-3 > *, .layout-2col-3-4 > * { flex: 1 1 auto; min-width: 0; width: auto; }\n"
+        "  .layout-3col > * { width: 100%; max-width: 100%; flex: 1 1 auto; }\n"
+        "  [class^=\"n-\"], [class*=\" n-\"] { max-width:100%; height:auto; min-height:0; box-sizing:border-box; }\n"
+        "}\n"
+    )
+
     return css
+
+def build_node_style_report(out_dir):
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        report = {
+            "scope": NODE_STYLE_SCOPE,
+            "totals": {
+                "nodes": len(collected_node_styles or {}),
+                "by_kind": {},
+                "issues": {
+                    "non_text_color": 0
+                }
+            },
+            "issues": {
+                "non_text_color": []
+            }
+        }
+        # Aggregate by kind
+        kind_counts = {}
+        for node_id in (collected_node_styles or {}).keys():
+            safe_id = css_safe_identifier(node_id)
+            k = NODE_KIND_MAP.get(safe_id, 'unknown')
+            kind_counts[k] = kind_counts.get(k, 0) + 1
+        report["totals"]["by_kind"] = kind_counts
+        # Detect color on non-text nodes (could cascade)
+        for node_id, props in (collected_node_styles or {}).items():
+            safe_id = css_safe_identifier(node_id)
+            kind = NODE_KIND_MAP.get(safe_id, 'unknown')
+            if kind != 'text':
+                for p in props:
+                    if isinstance(p, str) and p.strip().lower().startswith('color:'):
+                        report["totals"]["issues"]["non_text_color"] += 1
+                        report["issues"]["non_text_color"].append({
+                            "node_id": node_id,
+                            "safe_id": safe_id,
+                            "kind": kind,
+                            "prop": p
+                        })
+                        break
+        path = os.path.join(out_dir, 'node_style_report.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"[LOG] Node style report saved: {path}")
+    except Exception as e:
+        print(f"[WARN] Failed to write node style report: {e}")
 
 # テキストスタイル収集用辞書
 collected_text_styles = {}
@@ -2134,9 +3007,61 @@ def add_node_styles(node_id, style_props):
         return
     if not node_id:
         return
-    bucket = collected_node_styles.get(node_id, [])
-    # 重複排除
+    # Filtering based on node kind and scope
+    safe_id = css_safe_identifier(node_id)
+    kind = NODE_KIND_MAP.get(safe_id, None)
+
+    def allowed(prop: str) -> bool:
+        if not prop:
+            return False
+        p = prop.strip().lower()
+        scope = NODE_STYLE_SCOPE
+        # Always allow these basics
+        always = (
+            p.startswith('display:') or p.startswith('flex-') or p.startswith('justify-') or p.startswith('align-') or
+            p.startswith('gap:') or p.startswith('padding') or p.startswith('overflow:') or
+            (p.startswith('width:') and not SUPPRESS_CONTAINER_WIDTH) or
+            (p.startswith('min-width:') and not SUPPRESS_CONTAINER_WIDTH) or
+            p.startswith('max-width:') or
+            p.startswith('height:') or p.startswith('min-height:') or p.startswith('max-height:') or
+            p.startswith('transform:') or p.startswith('transform-origin')
+        )
+        if always:
+            return True
+        if scope == 'aggressive':
+            return True
+        # Block 'color' cascading on non-text
+        if p.startswith('color:') and kind != 'text':
+            return False
+        if scope == 'standard':
+            return True
+        # conservative
+        if kind == 'text':
+            # only text-specific cosmetics
+            return (
+                p.startswith('color:') or p.startswith('text-decoration') or p.startswith('text-transform') or
+                p.startswith('font-style') or p.startswith('margin:')
+            )
+        # containers / rects / image / line: allow visuals but not text color
+        return (
+            p.startswith('background') or p.startswith('border') or p.startswith('box-shadow') or
+            p.startswith('filter') or p.startswith('backdrop-filter') or p.startswith('mix-blend-mode') or
+            p.startswith('aspect-ratio') or
+            p.startswith('width') or p.startswith('height') or p.startswith('min-width') or p.startswith('min-height') or
+            p.startswith('overflow') or p.startswith('transform') or p.startswith('transform-origin')
+        )
+
+    filtered = []
     for prop in style_props:
+        if allowed(prop):
+            if prop not in filtered:
+                filtered.append(prop)
+
+    if not filtered:
+        return
+
+    bucket = collected_node_styles.get(node_id, [])
+    for prop in filtered:
         if prop and prop not in bucket:
             bucket.append(prop)
     collected_node_styles[node_id] = bucket
@@ -2324,6 +3249,11 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
         f.write(combined_css)
     print(f"[LOG] Combined (PC only) HTML saved: {combined_html_file}")
     print(f"[LOG] Combined (PC only) CSS saved: {combined_css_file}")
+    # Write validation report
+    try:
+        build_node_style_report(combined_dir)
+    except Exception as e:
+        print(f"[WARN] Report generation failed: {e}")
 
 # =============================
 # Optional: SP Frame Processing
@@ -2331,12 +3261,26 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
 if SP_FRAME_NODE_ID:
     print("[LOG] === SPフレーム解析を開始します ===")
     # SP用のファイルJSONを取得（PCと別ファイルでも対応）
-    sp_file_data = fetch_file_json(SP_FILE_KEY)
-    figma_styles_sp = extract_figma_styles(sp_file_data)
-    sp_frame = find_node_by_id(sp_file_data["document"], SP_FRAME_NODE_ID)
-    if not sp_frame:
-        print(f"[WARN] SPフレームID {SP_FRAME_NODE_ID} が見つかりませんでした。スキップします。")
+    if SP_INPUT_JSON_FILE:
+        print(f"[LOG] Using local JSON file (SP): {SP_INPUT_JSON_FILE}")
+        sp_file_data = load_local_json(SP_INPUT_JSON_FILE)
     else:
+        if OFFLINE_MODE:
+            print("[WARN] OFFLINE_MODE=true ですが SP_INPUT_JSON_FILE が未指定のため、SP解析をスキップします。")
+            sp_file_data = None
+        else:
+            sp_file_data = fetch_file_json(SP_FILE_KEY)
+    if not sp_file_data:
+        sp_frame = None
+        print("[LOG] SP解析はスキップされました（ローカルJSONなし）")
+    else:
+        figma_styles_sp = extract_figma_styles(sp_file_data)
+        sp_frame = find_node_by_id(sp_file_data["document"], SP_FRAME_NODE_ID)
+        if not sp_frame:
+            print(f"[WARN] SPフレームID {SP_FRAME_NODE_ID} が見つかりませんでした。スキップします。")
+            # 何もせず抜ける
+            sp_frame = None
+    if sp_frame:
         target_frame = sp_frame
         print(f"[LOG] SP Frame found: {target_frame.get('name', 'Unnamed')}")
         ROOT_FRAME_BOUNDS = target_frame.get("absoluteBoundingBox", {}) or {}
@@ -2402,26 +3346,41 @@ if SP_FRAME_NODE_ID:
             try:
                 image_ids = collect_image_node_ids(target_frame)
                 print(f"[LOG] SP Image nodes detected: {len(image_ids)}")
-                url_map = fetch_figma_image_urls(SP_FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
                 # 共通のimagesディレクトリを使用（OUTPUT_DIRの直下）
                 base_output_dir = os.path.join(OUTPUT_DIR, os.path.basename(os.path.dirname(project_dir)))
                 images_dir = os.path.join(base_output_dir, "images")
-                if DOWNLOAD_IMAGES:
-                    IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT, "_sp")
-                else:
-                    # ローカル優先、無ければCDN
+                if USE_LOCAL_IMAGES_ONLY:
+                    # オフライン/ローカル参照のみ: 既存ファイルがあればそれをマッピング（_spサフィックス）
                     tmp_map = {}
-                    for nid, url in url_map.items():
-                        if not nid or not url:
+                    for nid in image_ids:
+                        if not nid:
                             continue
                         safe_id = css_safe_identifier(nid)
                         filename = f"{safe_id}_sp.{IMAGE_FORMAT}"
                         abs_path = os.path.join(images_dir, filename)
                         if os.path.exists(abs_path):
                             tmp_map[nid] = os.path.join("../images", filename)
-                        else:
-                            tmp_map[nid] = url
                     IMAGE_URL_MAP = tmp_map
+                    if not IMAGE_URL_MAP:
+                        print("[LOG] No local SP images found; will use placeholders where needed.")
+                else:
+                    url_map = fetch_figma_image_urls(SP_FILE_KEY, list(image_ids), IMAGE_FORMAT, IMAGE_SCALE)
+                    if DOWNLOAD_IMAGES:
+                        IMAGE_URL_MAP = download_images(url_map, images_dir, IMAGE_FORMAT, "_sp")
+                    else:
+                        # ローカル優先、無ければCDN
+                        tmp_map = {}
+                        for nid, url in url_map.items():
+                            if not nid or not url:
+                                continue
+                            safe_id = css_safe_identifier(nid)
+                            filename = f"{safe_id}_sp.{IMAGE_FORMAT}"
+                            abs_path = os.path.join(images_dir, filename)
+                            if os.path.exists(abs_path):
+                                tmp_map[nid] = os.path.join("../images", filename)
+                            else:
+                                tmp_map[nid] = url
+                        IMAGE_URL_MAP = tmp_map
             except Exception as e:
                 print(f"[WARN] SP Image export failed: {e}")
         else:
@@ -2772,3 +3731,8 @@ if SINGLE_HTML:
         f.write(combined_css)
     print(f"[LOG] Combined HTML saved: {combined_html_file}")
     print(f"[LOG] Combined CSS saved: {combined_css_file}")
+    # Write validation report
+    try:
+        build_node_style_report(combined_dir)
+    except Exception as e:
+        print(f"[WARN] Report generation failed: {e}")

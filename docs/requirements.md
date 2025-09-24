@@ -245,7 +245,7 @@ figma_output/
       </div>
     </div>
   </section>
-</div>
+  </div>
 ```
 
 #### CSS生成
@@ -313,3 +313,4 @@ figma_output/
 - AI学習による精度向上
 - リアルタイムプレビュー
 - チーム開発ワークフロー統合
+
