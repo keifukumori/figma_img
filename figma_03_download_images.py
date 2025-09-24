@@ -93,6 +93,32 @@ def fetch_figma_image_urls(file_key, node_ids, image_format="png", scale=1.0, to
     return data.get("images", {})
 
 
+def collect_image_fill_refs(node):
+    """Return list of imageRef strings for visible IMAGE fills within this node (no recursion)."""
+    refs = []
+    fills = node.get("fills", []) or []
+    for f in fills:
+        if isinstance(f, dict) and f.get("type") == "IMAGE" and f.get("visible", True):
+            ref = f.get("imageRef") or f.get("imageRefHash") or f.get("imageHash")
+            if ref:
+                refs.append(ref)
+    return refs
+
+
+def fetch_file_imagefill_urls(file_key, image_refs, token=None):
+    """Resolve imageRef (hash) -> URL using File Images API (no compositing)."""
+    if not image_refs:
+        return {}
+    headers = {"X-Figma-Token": token} if token else {}
+    ids_param = ",".join(sorted(set(image_refs)))
+    url = f"https://api.figma.com/v1/files/{file_key}/images?ids={ids_param}"
+    print(f"[LOG] Resolving image fills: {url}")
+    r = requests.get(url, headers=headers)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("images", {})
+
+
 def download_images(url_map, out_dir, file_ext="png", filename_suffix="", force_redownload=False):
     os.makedirs(out_dir, exist_ok=True)
     saved = []
@@ -185,9 +211,42 @@ def main():
     image_ids = collect_image_node_ids(pc_frame)
     print(f"[LOG] PC image nodes: {len(image_ids)}")
 
-    # Fetch URLs and download (PC)
-    url_map = fetch_figma_image_urls(pc_file_key, list(set(image_ids)), args.image_format, float(args.image_scale), token)
-    download_images(url_map, images_dir, args.image_format, filename_suffix="", force_redownload=args.force_redownload)
+    # Prefer fill imageRef (no text compositing). Fallback to node render per-node if missing.
+    # Build node_id -> primary imageRef mapping
+    node_to_ref = {}
+    all_refs = []
+    def walk(node):
+        if not isinstance(node, dict):
+            return
+        nid = node.get("id")
+        if nid:
+            refs = collect_image_fill_refs(node)
+            if refs:
+                node_to_ref[nid] = refs[0]  # primary fill only
+                all_refs.append(refs[0])
+        for c in node.get("children", []) or []:
+            walk(c)
+    walk(pc_frame)
+
+    # Resolve imageRef -> URL
+    ref_url_map = fetch_file_imagefill_urls(pc_file_key, all_refs, token)
+
+    # Prepare final URL map per node (fallback to node render when ref missing)
+    final_url_map = {}
+    fallback_nodes = []
+    for nid in image_ids:
+        ref = node_to_ref.get(nid)
+        if ref and ref_url_map.get(ref):
+            final_url_map[nid] = ref_url_map[ref]
+        else:
+            fallback_nodes.append(nid)
+
+    if fallback_nodes:
+        print(f"[LOG] Fallback to node render for {len(fallback_nodes)} nodes")
+        node_url_map = fetch_figma_image_urls(pc_file_key, list(set(fallback_nodes)), args.image_format, float(args.image_scale), token)
+        final_url_map.update({nid: url for nid, url in node_url_map.items() if url})
+
+    download_images(final_url_map, images_dir, args.image_format, filename_suffix="", force_redownload=args.force_redownload)
 
     # Optional SP
     sp_frame_id = args.sp_frame_id or os.getenv("SP_FRAME_NODE_ID")
@@ -211,12 +270,42 @@ def main():
         else:
             sp_image_ids = collect_image_node_ids(sp_frame)
             print(f"[LOG] SP image nodes: {len(sp_image_ids)}")
-            sp_url_map = fetch_figma_image_urls(sp_file_key, list(set(sp_image_ids)), args.image_format, float(args.image_scale), token)
-            download_images(sp_url_map, images_dir, args.image_format, filename_suffix="_sp", force_redownload=args.force_redownload)
+
+            # SP: prefer fill imageRef as well
+            sp_node_to_ref = {}
+            sp_all_refs = []
+            def walk_sp(n):
+                if not isinstance(n, dict):
+                    return
+                nid = n.get("id")
+                if nid:
+                    refs = collect_image_fill_refs(n)
+                    if refs:
+                        sp_node_to_ref[nid] = refs[0]
+                        sp_all_refs.append(refs[0])
+                for c in n.get("children", []) or []:
+                    walk_sp(c)
+            walk_sp(sp_frame)
+
+            sp_ref_url_map = fetch_file_imagefill_urls(sp_file_key, sp_all_refs, token)
+            sp_final_url_map = {}
+            sp_fallback_nodes = []
+            for nid in sp_image_ids:
+                ref = sp_node_to_ref.get(nid)
+                if ref and sp_ref_url_map.get(ref):
+                    sp_final_url_map[nid] = sp_ref_url_map[ref]
+                else:
+                    sp_fallback_nodes.append(nid)
+
+            if sp_fallback_nodes:
+                print(f"[LOG] SP fallback to node render for {len(sp_fallback_nodes)} nodes")
+                sp_node_url_map = fetch_figma_image_urls(sp_file_key, list(set(sp_fallback_nodes)), args.image_format, float(args.image_scale), token)
+                sp_final_url_map.update({nid: url for nid, url in sp_node_url_map.items() if url})
+
+            download_images(sp_final_url_map, images_dir, args.image_format, filename_suffix="_sp", force_redownload=args.force_redownload)
 
     print(f"[DONE] Images saved under: {images_dir}")
 
 
 if __name__ == "__main__":
     main()
-
