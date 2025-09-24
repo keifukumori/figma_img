@@ -188,10 +188,37 @@ def css_safe_identifier(text: str) -> str:
     safe = re.sub(r'-{2,}', '-', safe).strip('-')
     return safe
 
+def is_decorative_absolute_rect(node):
+    try:
+        if not isinstance(node, dict):
+            return False
+        if node.get("type") != "RECTANGLE":
+            return False
+        if (node.get("layoutPositioning") or "").upper() != "ABSOLUTE":
+            return False
+        b = (node.get("absoluteBoundingBox") or {})
+        h = float(b.get("height") or 0)
+        # Treat very thin absolute rectangles as decorative (e.g., underline)
+        return h <= 14.0
+    except Exception:
+        return False
+
 def should_exclude_node(node):
     """除外対象か判定（レイヤー名キーワード/IDで判定）"""
     if not node:
         return False
+    # Exclude invisible nodes
+    try:
+        if node.get("visible") is False:
+            return True
+    except Exception:
+        pass
+    # Exclude decorative absolute thin rectangles
+    try:
+        if is_decorative_absolute_rect(node):
+            return True
+    except Exception:
+        pass
     nid = node.get("id")
     if nid and nid in EXCLUDE_LAYER_IDS:
         return True
@@ -933,10 +960,17 @@ def map_auto_layout_inline_styles(element):
         else:
             style_parts.append("flex-direction:column")
 
-        # gap
+        # gap (clamp negative spacing to 0 since we don't overlap)
         gap = element.get("itemSpacing")
-        if isinstance(gap, (int, float)) and gap > 0:
-            style_parts.append(f"gap:{int(gap)}px")
+        if isinstance(gap, (int, float)):
+            try:
+                g = int(gap)
+            except Exception:
+                g = 0
+            if g < 0:
+                g = 0
+            if g > 0:
+                style_parts.append(f"gap:{g}px")
 
         # padding with optional horizontal normalization
         p_top = int(element.get("paddingTop", 0) or 0)
@@ -2351,7 +2385,12 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             # 固有サイズをCSSに委譲（Auto Layoutの意図を尊重）
             child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = []
-            if not skip_w and not SUPPRESS_CONTAINER_WIDTH:
+            # Force fixed width for FIXED sizing in horizontal Auto Layout
+            sizing_h = (element.get("layoutSizingHorizontal") or "").upper()
+            if parent_layout_mode == "HORIZONTAL" and sizing_h == "FIXED":
+                node_props.append(f"width: {int(width)}px")
+                node_props.append(f"flex: 0 0 {int(width)}px")
+            elif not skip_w and not SUPPRESS_CONTAINER_WIDTH:
                 node_props.append(f"width: {int(width)}px")
             if not skip_h:
                 if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and width and height:
@@ -2388,7 +2427,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                 all_classes = [img_class]
                 if node_class:
                     all_classes.append(node_class)
-                return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
+                return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="height: auto; display: block;">\n{indent}</div>\n'
             else:
                 # 画像は使わず、サイズだけ確保
                 all_classes = [img_class]
@@ -2868,6 +2907,14 @@ img {{
             css += "    margin: 10px 0;\n"
         css += "}\n\n\n"
     
+    # Auto Layout内の見出し/段落は余白をgapで管理するため、既定marginをリセット
+    css += (
+        ".layout-flex-col h1, .layout-flex-col h2, .layout-flex-col h3, .layout-flex-col h4, .layout-flex-col h5, .layout-flex-col h6, .layout-flex-col p,\n"
+        ".layout-flex-row h1, .layout-flex-row h2, .layout-flex-row h3, .layout-flex-row h4, .layout-flex-row h5, .layout-flex-row h6, .layout-flex-row p {\n"
+        "  margin: 0;\n"
+        "}\n\n"
+    )
+
     css += '''/* Rectangle styles */
 .rect-element {
     margin: 10px 0;
@@ -2917,6 +2964,11 @@ img {{
     
     css += '''}
 '''
+
+    # Two-column stability helpers
+    css += ".layout-2col > * { min-width: 0; }\n"
+    css += ".layout-2col { align-items: stretch; }\n.layout-2col > :first-child { flex-shrink: 0; }\n"
+    css += ".layout-2col > :first-child img { max-width: none; width: auto; }\n\n"
 
     # Optional: equalize 2-col when no ratio is specified
     if EQUALIZE_2COL_FALLBACK:
@@ -3254,6 +3306,7 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
         build_node_style_report(combined_dir)
     except Exception as e:
         print(f"[WARN] Report generation failed: {e}")
+ 
 
 # =============================
 # Optional: SP Frame Processing

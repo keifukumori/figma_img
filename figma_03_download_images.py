@@ -6,6 +6,10 @@ from urllib.parse import urlparse, parse_qs, unquote
 
 import requests
 from dotenv import load_dotenv
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 
 def sanitize_filename(name: str) -> str:
@@ -147,6 +151,74 @@ def download_images(url_map, out_dir, file_ext="png", filename_suffix="", force_
     return saved
 
 
+def save_processed_fill_image(img_bytes, out_path, mode, target_w, target_h, file_ext="png"):
+    if Image is None:
+        # Fallback: save raw bytes
+        with open(out_path, "wb") as f:
+            f.write(img_bytes)
+        return
+    from io import BytesIO
+    try:
+        src = Image.open(BytesIO(img_bytes)).convert("RGBA")
+        tw, th = int(round(target_w)), int(round(target_h))
+        if tw <= 0 or th <= 0:
+            # Save original if invalid size
+            with open(out_path, "wb") as f:
+                f.write(img_bytes)
+            return
+
+        mode = (mode or "FILL").upper()
+        if mode == "FILL":
+            # cover: scale to cover, then center-crop
+            s = max(tw / src.width, th / src.height)
+            new_w, new_h = int(round(src.width * s)), int(round(src.height * s))
+            img = src.resize((new_w, new_h), Image.LANCZOS)
+            left = max(0, (new_w - tw) // 2)
+            top = max(0, (new_h - th) // 2)
+            img = img.crop((left, top, left + tw, top + th))
+        elif mode == "FIT":
+            # contain: scale to fit, center with transparent letterbox
+            s = min(tw / src.width, th / src.height)
+            new_w, new_h = int(round(src.width * s)), int(round(src.height * s))
+            resized = src.resize((new_w, new_h), Image.LANCZOS)
+            img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+            left = (tw - new_w) // 2
+            top = (th - new_h) // 2
+            img.paste(resized, (left, top), resized)
+        elif mode == "TILE":
+            # simple tile at 100%
+            tile = src
+            img = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+            y = 0
+            while y < th:
+                x = 0
+                while x < tw:
+                    img.paste(tile, (x, y), tile)
+                    x += tile.width
+                y += tile.height
+        elif mode == "STRETCH":
+            img = src.resize((tw, th), Image.LANCZOS)
+        else:
+            # default to cover
+            s = max(tw / src.width, th / src.height)
+            new_w, new_h = int(round(src.width * s)), int(round(src.height * s))
+            img = src.resize((new_w, new_h), Image.LANCZOS)
+            left = max(0, (new_w - tw) // 2)
+            top = max(0, (new_h - th) // 2)
+            img = img.crop((left, top, left + tw, top + th))
+
+        # Convert mode for JPEG
+        ext = (os.path.splitext(out_path)[1][1:] or file_ext).lower()
+        if ext in ("jpg", "jpeg") and img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        img.save(out_path)
+    except Exception:
+        with open(out_path, "wb") as f:
+            f.write(img_bytes)
+
+
 def resolve_file_key(cli_key, cli_url, env_key, env_url):
     if cli_key:
         return cli_key
@@ -179,6 +251,8 @@ def main():
     parser.add_argument("--image-format", default=os.getenv("IMAGE_FORMAT", "png"), help="Image format (png,jpg,webp,...)")
     parser.add_argument("--image-scale", default=os.getenv("IMAGE_SCALE", "1"), help="Image export scale")
     parser.add_argument("--force-redownload", action="store_true", help="Force re-download even if file exists")
+    parser.add_argument("--ref-only", action="store_true", help="Do not fallback to node render (avoid text compositing)")
+    parser.add_argument("--leaf-only", action="store_true", help="Target only leaf nodes (no children) with IMAGE fills")
     args = parser.parse_args()
 
     token = os.getenv("FIGMA_API_TOKEN")
@@ -211,29 +285,63 @@ def main():
     pc_frame = find_node_by_id(pc_file_data.get("document", {}), frame_id)
     if not pc_frame:
         raise SystemExit(f"Frame not found: {frame_id}")
-    image_ids = collect_image_node_ids(pc_frame)
+    # Collect target nodes
+    if args.leaf_only:
+        def collect_leaf_image_nodes(n):
+            ids = []
+            if not isinstance(n, dict):
+                return ids
+            if not n.get("children"):
+                fills = n.get("fills", []) or []
+                for f in fills:
+                    if isinstance(f, dict) and f.get("type") == "IMAGE" and f.get("visible", True):
+                        nid = n.get("id")
+                        if nid:
+                            ids.append(nid)
+                        break
+            for c in n.get("children", []) or []:
+                ids.extend(collect_leaf_image_nodes(c))
+            return ids
+        image_ids = collect_leaf_image_nodes(pc_frame)
+    else:
+        image_ids = collect_image_node_ids(pc_frame)
     print(f"[LOG] PC image nodes: {len(image_ids)}")
 
     # Prefer fill imageRef (no text compositing). Fallback to node render per-node if missing.
-    # Build node_id -> primary imageRef mapping
+    # Build node_id -> primary imageRef mapping and fill info
     node_to_ref = {}
+    node_fill_info = {}  # nid -> { 'scaleMode': str, 'bounds': (w,h) }
     all_refs = []
     def walk(node):
         if not isinstance(node, dict):
             return
         nid = node.get("id")
         if nid:
-            refs = collect_image_fill_refs(node)
-            if refs:
-                node_to_ref[nid] = refs[0]  # primary fill only
-                all_refs.append(refs[0])
+            fills = node.get("fills", []) or []
+            # primary IMAGE fill only
+            for f in fills:
+                if isinstance(f, dict) and f.get("type") == "IMAGE" and f.get("visible", True):
+                    ref = f.get("imageRef") or f.get("imageRefHash") or f.get("imageHash")
+                    if ref:
+                        node_to_ref[nid] = ref
+                        all_refs.append(ref)
+                        node_fill_info[nid] = {
+                            'scaleMode': f.get('scaleMode', 'FILL'),
+                            'bounds': (
+                                float((node.get('absoluteBoundingBox') or {}).get('width') or 0),
+                                float((node.get('absoluteBoundingBox') or {}).get('height') or 0)
+                            )
+                        }
+                    break
         for c in node.get("children", []) or []:
             walk(c)
     walk(pc_frame)
 
     # Resolve imageRef -> URL
+    unique_refs = sorted(set(all_refs))
+    print(f"[LOG] imageRef collected: {len(unique_refs)} (from nodes: {len(node_to_ref)})")
     ref_url_map = fetch_file_imagefill_urls(
-        pc_file_key, all_refs, token, args.image_format, float(args.image_scale)
+        pc_file_key, unique_refs, token, args.image_format, float(args.image_scale)
     )
 
     # Prepare final URL map per node (fallback to node render when ref missing)
@@ -242,15 +350,50 @@ def main():
     for nid in image_ids:
         ref = node_to_ref.get(nid)
         if ref and ref_url_map.get(ref):
-            final_url_map[nid] = ref_url_map[ref]
+            # We'll process these with PIL to match container size/scaleMode
+            pass
         else:
             fallback_nodes.append(nid)
 
-    if fallback_nodes:
+    if fallback_nodes and not args.ref_only:
         print(f"[LOG] Fallback to node render for {len(fallback_nodes)} nodes")
         node_url_map = fetch_figma_image_urls(pc_file_key, list(set(fallback_nodes)), args.image_format, float(args.image_scale), token)
         final_url_map.update({nid: url for nid, url in node_url_map.items() if url})
+    elif fallback_nodes and args.ref_only:
+        print(f"[LOG] Ref-only mode: skip {len(fallback_nodes)} nodes without resolvable imageRef")
 
+    print(f"[LOG] Final PC images to download: {len(final_url_map)}")
+
+    # Process ref-based images
+    processed_count = 0
+    for nid in image_ids:
+        ref = node_to_ref.get(nid)
+        url = ref_url_map.get(ref) if ref else None
+        if not url:
+            continue
+        info = node_fill_info.get(nid, {})
+        mode = info.get('scaleMode', 'FILL')
+        w, h = info.get('bounds', (0, 0))
+        tw = float(w) * float(args.image_scale)
+        th = float(h) * float(args.image_scale)
+        safe_id = css_safe_identifier(nid)
+        out_path = os.path.join(images_dir, f"{safe_id}.{args.image_format}")
+        if os.path.exists(out_path) and not args.force_redownload:
+            print(f"[CACHE] Using existing image: {out_path}")
+            processed_count += 1
+            continue
+        try:
+            r = requests.get(url)
+            r.raise_for_status()
+            save_processed_fill_image(r.content, out_path, mode, tw, th, args.image_format)
+            print(f"[LOG] Saved (processed): {out_path} [{mode} {int(tw)}x{int(th)}]")
+            processed_count += 1
+        except Exception as e:
+            print(f"[WARN] Failed to process ref image for {nid}: {e}")
+
+    print(f"[LOG] Processed ref-based images: {processed_count}")
+
+    # Download fallback node renders (may include text unless --ref-only)
     download_images(final_url_map, images_dir, args.image_format, filename_suffix="", force_redownload=args.force_redownload)
 
     # Optional SP
@@ -273,21 +416,51 @@ def main():
         if not sp_frame:
             print(f"[WARN] SP frame not found: {sp_frame_id}. Skipping SP.")
         else:
-            sp_image_ids = collect_image_node_ids(sp_frame)
+            if args.leaf_only:
+                def collect_leaf_image_nodes_sp(n):
+                    ids = []
+                    if not isinstance(n, dict):
+                        return ids
+                    if not n.get("children"):
+                        fills = n.get("fills", []) or []
+                        for f in fills:
+                            if isinstance(f, dict) and f.get("type") == "IMAGE" and f.get("visible", True):
+                                nid = n.get("id")
+                                if nid:
+                                    ids.append(nid)
+                                break
+                    for c in n.get("children", []) or []:
+                        ids.extend(collect_leaf_image_nodes_sp(c))
+                    return ids
+                sp_image_ids = collect_leaf_image_nodes_sp(sp_frame)
+            else:
+                sp_image_ids = collect_image_node_ids(sp_frame)
             print(f"[LOG] SP image nodes: {len(sp_image_ids)}")
 
             # SP: prefer fill imageRef as well
             sp_node_to_ref = {}
+            sp_node_fill_info = {}
             sp_all_refs = []
             def walk_sp(n):
                 if not isinstance(n, dict):
                     return
                 nid = n.get("id")
                 if nid:
-                    refs = collect_image_fill_refs(n)
-                    if refs:
-                        sp_node_to_ref[nid] = refs[0]
-                        sp_all_refs.append(refs[0])
+                    fills = n.get("fills", []) or []
+                    for f in fills:
+                        if isinstance(f, dict) and f.get("type") == "IMAGE" and f.get("visible", True):
+                            ref = f.get("imageRef") or f.get("imageRefHash") or f.get("imageHash")
+                            if ref:
+                                sp_node_to_ref[nid] = ref
+                                sp_all_refs.append(ref)
+                                sp_node_fill_info[nid] = {
+                                    'scaleMode': f.get('scaleMode', 'FILL'),
+                                    'bounds': (
+                                        float((n.get('absoluteBoundingBox') or {}).get('width') or 0),
+                                        float((n.get('absoluteBoundingBox') or {}).get('height') or 0)
+                                    )
+                                }
+                            break
                 for c in n.get("children", []) or []:
                     walk_sp(c)
             walk_sp(sp_frame)
@@ -300,15 +473,48 @@ def main():
             for nid in sp_image_ids:
                 ref = sp_node_to_ref.get(nid)
                 if ref and sp_ref_url_map.get(ref):
-                    sp_final_url_map[nid] = sp_ref_url_map[ref]
+                    pass
                 else:
                     sp_fallback_nodes.append(nid)
 
-            if sp_fallback_nodes:
+            if sp_fallback_nodes and not args.ref_only:
                 print(f"[LOG] SP fallback to node render for {len(sp_fallback_nodes)} nodes")
                 sp_node_url_map = fetch_figma_image_urls(sp_file_key, list(set(sp_fallback_nodes)), args.image_format, float(args.image_scale), token)
                 sp_final_url_map.update({nid: url for nid, url in sp_node_url_map.items() if url})
+            elif sp_fallback_nodes and args.ref_only:
+                print(f"[LOG] SP ref-only mode: skip {len(sp_fallback_nodes)} nodes without resolvable imageRef")
 
+            print(f"[LOG] Final SP images to download: {len(sp_final_url_map)}")
+            # Process SP ref-based
+            sp_processed = 0
+            for nid in sp_image_ids:
+                ref = sp_node_to_ref.get(nid)
+                url = sp_ref_url_map.get(ref) if ref else None
+                if not url:
+                    continue
+                info = sp_node_fill_info.get(nid, {})
+                mode = info.get('scaleMode', 'FILL')
+                w, h = info.get('bounds', (0, 0))
+                tw = float(w) * float(args.image_scale)
+                th = float(h) * float(args.image_scale)
+                safe_id = css_safe_identifier(nid)
+                out_path = os.path.join(images_dir, f"{safe_id}_sp.{args.image_format}")
+                if os.path.exists(out_path) and not args.force_redownload:
+                    print(f"[CACHE] Using existing image: {out_path}")
+                    sp_processed += 1
+                    continue
+                try:
+                    r = requests.get(url)
+                    r.raise_for_status()
+                    save_processed_fill_image(r.content, out_path, mode, tw, th, args.image_format)
+                    print(f"[LOG] Saved (processed SP): {out_path} [{mode} {int(tw)}x{int(th)}]")
+                    sp_processed += 1
+                except Exception as e:
+                    print(f"[WARN] Failed to process SP ref image for {nid}: {e}")
+
+            print(f"[LOG] Processed SP ref-based images: {sp_processed}")
+
+            # Download SP fallback
             download_images(sp_final_url_map, images_dir, args.image_format, filename_suffix="_sp", force_redownload=args.force_redownload)
 
     print(f"[DONE] Images saved under: {images_dir}")
