@@ -93,6 +93,10 @@ try:
 except Exception:
     HPAD_WRAPPER_MIN_WIDTH_RATIO = 0.9
 
+# Text-exact exclusion tokens (comma-separated). If a TEXT node's content exactly matches
+# one of these tokens (after simple normalization), that TEXT node is excluded.
+EXCLUDE_TEXT_EXACT = [s.strip() for s in (os.getenv("EXCLUDE_TEXT_EXACT", "") or "").split(",") if s.strip()]
+
 # Child equalization and 2-col ABB ratio mapping
 STOP_CHILD_EQUALIZE = (os.getenv("STOP_CHILD_EQUALIZE", "true").lower() == "true")
 USE_ABB_RATIO_2COL = (os.getenv("USE_ABB_RATIO_2COL", "true").lower() == "true")
@@ -188,6 +192,15 @@ def css_safe_identifier(text: str) -> str:
     safe = re.sub(r'-{2,}', '-', safe).strip('-')
     return safe
 
+def _normalize_text(s: str) -> str:
+    if not isinstance(s, str):
+        return ""
+    s = s.replace("\r", "\n").strip()
+    # collapse whitespace
+    s = re.sub(r"\s+", " ", s)
+    s = s.strip('"\'')
+    return s
+
 def is_decorative_absolute_rect(node):
     try:
         if not isinstance(node, dict):
@@ -250,6 +263,16 @@ def should_exclude_node(node):
                 else:
                     # ドライランでも閾値未満は候補として残さない
                     pass
+    # Exact-text exclusion for TEXT nodes
+    try:
+        if EXCLUDE_TEXT_EXACT and (node.get("type") == "TEXT"):
+            chars = node.get("characters") or ""
+            normalized = _normalize_text(chars)
+            tokens = {_normalize_text(t) for t in EXCLUDE_TEXT_EXACT}
+            if normalized and normalized in tokens:
+                return True
+    except Exception:
+        pass
     # 自動ヘッダー/フッター判定（ルート直下の子ノードに限定）
     if EXCLUDE_HEADER_FOOTER and node.get("id") in ROOT_CHILD_IDS and is_probable_header_footer(node):
         return True
