@@ -1890,44 +1890,45 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     
     layout_grow = child.get("layoutGrow", 0)
     layout_align = (child.get("layoutAlign") or "").upper()
+    sizing_h = (child.get("layoutSizingHorizontal") or "").upper()
+    sizing_v = (child.get("layoutSizingVertical") or "").upper()
+    cb = child.get("absoluteBoundingBox") or {}
+    cw = float(cb.get("width") or 0)
     
     # 画像を含む要素はAuto Layout内で固定幅を避ける
     has_image = is_image_element(child)
     
     # Auto Layout内の要素は基本的に柔軟サイズ
     if parent_layout_mode == "HORIZONTAL":
-        # 水平レイアウト内では幅を柔軟にする
-        skip_w = True
-        # 画像要素は特に固定幅を避ける
-        if has_image:
+        # 押し広げ抑止（どの子にも付与）
+        styles.append("min-width:0")
+        if sizing_h == "FIXED" and cw > 0:
+            # 固定幅: ベース・収縮不可
+            styles.append(f"flex:0 0 {int(cw)}px")
+            styles.append(f"width:{int(cw)}px")
+            skip_w = False
+        elif sizing_h == "FILL" or (layout_grow and float(layout_grow) > 0):
+            # 残り幅: basis=0で安定配分
+            try:
+                grow = int(layout_grow) if layout_grow else 1
+            except Exception:
+                grow = 1
+            styles.append(f"flex:{grow} 1 0px")
+            styles.append("width:auto")
             skip_w = True
-        if layout_grow > 0:
-            # layoutGrowが指定されている場合はそれを使用（縮小禁止）
-            styles.append(f"flex:{layout_grow} 0 0")
         else:
-            if not STOP_CHILD_EQUALIZE:
-                # 親のレイアウト情報から適切な比率を取得
-                flex_ratio = 1  # デフォルト均等分割
-                if parent_layout_info and parent_layout_info.get("type") == "two-column":
-                    ratios = parent_layout_info.get("ratios", [])
-                    if len(ratios) >= 2:
-                        # 2カラムの比率情報を使用（例：[1, 2] → 1:2の比率）
-                        child_index = 0  # 実際の子要素順序は別途取得が必要
-                        if child_index < len(ratios):
-                            flex_ratio = ratios[child_index]
-                styles.append(f"flex:{flex_ratio} 0 auto")
+            # HUG/未指定: 内容幅
+            styles.append("flex:0 0 auto")
+            styles.append("width:auto")
+            skip_w = True
     elif parent_layout_mode == "VERTICAL":
-        # 垂直レイアウト内では高さを柔軟にする
+        # 垂直レイアウト: 高さは柔軟、横は押し広げ抑止
         skip_h = True
-        # 画像要素は垂直レイアウトでも幅の固定を避ける
-        if has_image:
-            skip_w = True
-        if layout_grow > 0:
-            # layoutGrowが指定されている場合はそれを使用（縮小禁止）
-            styles.append(f"flex:{layout_grow} 0 auto")
+        styles.append("min-width:0")
+        if layout_grow and float(layout_grow) > 0:
+            styles.append(f"flex:{int(layout_grow)} 1 auto")
         else:
-            # grow=0の場合は均等分割で縮小禁止
-            styles.append("flex:1 0 auto")
+            styles.append("flex:0 0 auto")
     
     # align-self on counter axis
     align_map = {
@@ -2408,13 +2409,19 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             # 固有サイズをCSSに委譲（Auto Layoutの意図を尊重）
             child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = []
-            # Force fixed width for FIXED sizing in horizontal Auto Layout
+            # 押し広げ抑止
+            node_props.append("min-width: 0")
+            # Auto Layout HORIZONTAL: Sizingに応じて幅/フレックスを明示
             sizing_h = (element.get("layoutSizingHorizontal") or "").upper()
-            if parent_layout_mode == "HORIZONTAL" and sizing_h == "FIXED":
-                node_props.append(f"width: {int(width)}px")
-                node_props.append(f"flex: 0 0 {int(width)}px")
-            elif not skip_w and not SUPPRESS_CONTAINER_WIDTH:
-                node_props.append(f"width: {int(width)}px")
+            if parent_layout_mode == "HORIZONTAL":
+                if sizing_h == "FIXED" and width:
+                    node_props.append(f"flex: 0 0 {int(width)}px")
+                    node_props.append(f"width: {int(width)}px")
+                else:
+                    node_props.append("width: auto")
+            else:
+                if not skip_w and not SUPPRESS_CONTAINER_WIDTH:
+                    node_props.append(f"width: {int(width)}px")
             if not skip_h:
                 if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and width and height:
                     node_props.append(f"aspect-ratio: {int(width)}/{int(height)}")

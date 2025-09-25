@@ -118,3 +118,42 @@
 ## まとめ
 - 「左=固定、右=残り」というAuto Layoutの意図を保ちながら、Flexbox特有の幅決定ルールや既定マージン/装飾ノイズによる揺れを抑えました。余白は`gap`で一元管理し、コンテンツは列幅を主張しない方針にすることで、Figmaの見た目に近い安定した出力を得ています。
 
+---
+
+## 追記（最新の根本対応: 生成ロジックの安定化）
+現象: 個別のページやOSで2カラムの横幅が凸凹し、左カラム（画像側）が固定にならない/はみ出すことがある。
+
+原因の核心: 後処理によるCSS調整だけでは、Flexの「min-content」や既存CSSとの競合を完全に避けられず、状況により配分がぶれる。根本的には、生成時点でFigmaのSizing（FIXED/FILL/HUG）をそのままFlexに落とし込むべき。
+
+対応（fetch_figma_layout.py に実装）:
+- 親がAuto Layout HORIZONTALのときの子マッピングを厳密化
+  - すべての子に `min-width:0` を付与（押し広げ抑止）
+  - sizingHorizontal=FIXED かつ幅あり → `flex:0 0 [width]px; width:[width]px`（固定・収縮不可）
+  - sizingHorizontal=FILL or `layoutGrow>0` → `flex:[grow or 1] 1 0px; width:auto`（残り幅、basis=0で安定）
+  - HUG/未指定 → `flex:0 0 auto; width:auto`（内容幅）
+- 親がAuto Layout VERTICALのとき
+  - 高さは柔軟（skip_h）、横は `min-width:0`、`layoutGrow>0` で `flex:grow 1 auto`、それ以外は `flex:0 0 auto`
+- 画像は必ずラッパー主導
+  - ラッパー側に上記の幅/フレックスを設定し、img は `max-width:100%; height:auto` に徹する（表示はラッパーが決める）
+
+設計上の判断（競合しない設計）:
+- nth-child/直下子（`>`）や `!important` は使わない
+  - 役割（FIXED/FILL/HUG）を生成側で決め、ノード固有CSSだけで完結させる
+- 後処理（04）は“最小セット”に限定
+  - fx-row/fx-col の併記、`.layout-2col img { max-width:100%; height:auto }` のクランプのみ
+  - CSSのコメントアウト/置換は原則不要（競合を作らないため）
+
+効果（何が直ったか）:
+- 左カラム（画像側）が「常に」FigmaのFIXED幅で安定（個別値を当てず、Sizingベースで自動）
+- 右カラムは残り幅を確実に取得（basis=0px で min-content 影響を排除）
+- WindowsなどOS差での“はみ出し”はラッパー+`min-width:0`+`max-width:100%`で抑止
+
+確認手順（DevTools）:
+- 左のラッパーに `flex:0 0 [px]; width:[px]` が出ている（FIXED）
+- 右のラッパーに `flex:1 1 0px; width:auto`（FILL）
+- 子要素に `min-width:0` があり、img は `max-width:100%; height:auto` になっている
+
+注意（適用順）:
+- 生成（01/02）→ 後処理（04は最小セットのみ）→ 確認
+- 以前の後処理（コメントアウト/セレクタ置換/BEM化）は不要。競合を作らず生成側で決めるのが最も安定
+

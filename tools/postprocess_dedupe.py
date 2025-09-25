@@ -25,6 +25,11 @@ def parse_args():
     p.add_argument("--inject-css", action="store_true", help="Write style-common.css and inject <link> + add utility classes to HTML")
     p.add_argument("--backup", action="store_true", help="Write .bak backups when modifying files")
     p.add_argument("--comment-out-covered", action="store_true", help="Conservatively comment out covered flex declarations in style.css")
+    # Sectionize options (safe mode)
+    p.add_argument("--sectionize", action="store_true", help="Wrap eligible blocks in <section> safely (wrapper mode)")
+    p.add_argument("--require-heading", action="store_true", default=True, help="Require at least one h1–h6 inside block (default: true)")
+    p.add_argument("--min-children", type=int, default=2, help="Require at least this many child opening tags inside (default: 2)")
+    p.add_argument("--exclude-roles", default="header,footer,nav", help="Comma-separated name fragments to exclude (default: header,footer,nav)")
     return p.parse_args()
 
 
@@ -170,10 +175,27 @@ def write_style_common(root: Path, needed_utils):
         lines.append(f":where(.{fw}){{flex-wrap:{v};}}")
     # Overflow guard for images in two-column layouts (Windows subpixel/rounding differences)
     lines.append(":where(.layout-2col) img{max-width:100%;height:auto;display:block}")
-    # Prefer role class over positional selector to avoid nth-child fragility
-    lines.append(":where(.layout-2col)>.col-first img{max-width:100% !important}")
-    # Fallback for environments where role class is未付与（残置）
-    lines.append(":where(.layout-2col)>:first-child img{max-width:100% !important}")
+    # BEM-first: prefer role classes over positional
+    lines.append(":where(.layout-2col__col--first) img{max-width:100%;width:auto;height:auto;display:block}")
+    # Fallback for legacy role classes (to be removed later)
+    lines.append(":where(.layout-2col) .col-first img{max-width:100%;width:auto;height:auto;display:block}")
+    # Fullbleed background alignment via CSS variables (focal and offsets)
+    # Fullbleed background: center via margin calc to avoid transform drift/OS scrollbar width issues
+    lines.append(":where(.bg-fullbleed){position:relative;width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);background-repeat:no-repeat;background-size:cover;background-position: calc(var(--bg-x, 50%) + var(--bg-offset-x, 0px)) calc(var(--bg-y, 50%) + var(--bg-offset-y, 0px));}")
+    # Helpers: class-based focal alignment
+    lines.append(":where(.bg-align-left){--bg-x:0%;}")
+    lines.append(":where(.bg-align-center){--bg-x:50%;}")
+    lines.append(":where(.bg-align-right){--bg-x:100%;}")
+    lines.append(":where(.bg-align-top){--bg-y:0%;}")
+    lines.append(":where(.bg-align-middle){--bg-y:50%;}")
+    lines.append(":where(.bg-align-bottom){--bg-y:100%;}")
+    # Helpers: data-attribute based focal alignment
+    lines.append('[data-bg-x="left"]{--bg-x:0%;}')
+    lines.append('[data-bg-x="center"]{--bg-x:50%;}')
+    lines.append('[data-bg-x="right"]{--bg-x:100%;}')
+    lines.append('[data-bg-y="top"]{--bg-y:0%;}')
+    lines.append('[data-bg-y="middle"]{--bg-y:50%;}')
+    lines.append('[data-bg-y="bottom"]{--bg-y:100%;}')
     out = root / "style-common.css"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out
@@ -305,13 +327,216 @@ def add_two_col_role_classes(html_path: Path, backup=False):
             classes = cls.split()
             if role in classes:
                 return
+            # add simple role
             classes.append(role)
+            # add BEM roles for layout-2col
+            if role == "col-first":
+                if "layout-2col__col" not in classes:
+                    classes.append("layout-2col__col")
+                if "layout-2col__col--first" not in classes:
+                    classes.append("layout-2col__col--first")
+            elif role == "col-second":
+                if "layout-2col__col" not in classes:
+                    classes.append("layout-2col__col")
+                if "layout-2col__col--second" not in classes:
+                    classes.append("layout-2col__col--second")
             new_cls = " ".join(classes)
             # replace only class attribute inside the line
             lines[idx] = re.sub(r"class=\"[^\"]+\"", f'class="{new_cls}"', lines[idx], count=1)
             changed = True
         add_role(first_idx, "col-first")
         add_role(second_idx, "col-second")
+        i = j if j > i else i + 1
+    if changed:
+        new_text = "\n".join(lines) + "\n"
+        if backup:
+            html_path.with_suffix(html_path.suffix + ".bak").write_text(original, encoding="utf-8")
+        html_path.write_text(new_text, encoding="utf-8")
+
+
+def sectionize_safe(html_path: Path, require_heading: bool, min_children: int, exclude_roles: set, backup=False):
+    """Wrap eligible blocks in <section> with incremental ids (section-001...), non-destructive.
+    Eligibility heuristics:
+      - line with <div ... class="...frame..."> (or layout container)
+      - contains at least one <h1>-<h6> if require_heading
+      - contains at least min_children child opening tags
+      - class name does not include any of exclude_roles fragments
+      - avoids already wrapped sections
+    """
+    text = html_path.read_text(encoding="utf-8", errors="ignore")
+    original = text
+    lines = text.splitlines()
+    open_re = re.compile(r"^(\s*)<div[^>]*\bclass=\"([^\"]*\bframe\b[^\"]*)\"[^>]*>")
+    child_re = re.compile(r"^(\s*)<([a-zA-Z]+)\b[^>]*\bclass=\"[^\"]+\"[^>]*>")
+    close_re_tpl = r"^{indent}</div>\s*$"
+    section_count = 0
+    i = 0
+    changed = False
+    while i < len(lines):
+        m = open_re.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        indent = m.group(1)
+        classes = m.group(2)
+        # exclude roles by class fragment
+        if any(role.strip().lower() in classes.lower() for role in exclude_roles if role.strip()):
+            i += 1
+            continue
+        # find matching close at same indent
+        close_re = re.compile(close_re_tpl.format(indent=re.escape(indent)))
+        has_heading = False
+        child_count = 0
+        j = i + 1
+        while j < len(lines):
+            if close_re.match(lines[j]):
+                break
+            if re.search(r"<h[1-6]\b", lines[j], re.I):
+                has_heading = True
+            if child_re.match(lines[j]):
+                child_count += 1
+            j += 1
+        if j >= len(lines):
+            i += 1
+            continue
+        # eligibility
+        if require_heading and not has_heading:
+            i = j + 1
+            continue
+        if child_count < min_children:
+            i = j + 1
+            continue
+        # avoid double-wrapping: if previous non-empty is already <section> open at same indent
+        prev = i - 1
+        while prev >= 0 and not lines[prev].strip():
+            prev -= 1
+        if prev >= 0 and lines[prev].strip().startswith(f"{indent}<section"):
+            i = j + 1
+            continue
+        # perform wrapping
+        section_count += 1
+        sec_id = f"section-{section_count:03d}"
+        open_tag = f"{indent}<section id=\"{sec_id}\" class=\"c-section\">"
+        close_tag = f"{indent}</section>"
+        lines.insert(i, open_tag)
+        # adjust j due to insertion
+        j += 1
+        lines.insert(j + 1, close_tag)
+        changed = True
+        i = j + 2
+    if changed:
+        new_text = "\n".join(lines) + "\n"
+        if backup:
+            html_path.with_suffix(html_path.suffix + ".bak").write_text(original, encoding="utf-8")
+        html_path.write_text(new_text, encoding="utf-8")
+
+
+def ensure_fullbleed_content_wrapper(html_path: Path, backup=False):
+    """Ensure .bg-fullbleed has a direct .content-width-container wrapper for its content.
+    If missing, insert it to center inner content.
+    """
+    text = html_path.read_text(encoding="utf-8", errors="ignore")
+    original = text
+    lines = text.splitlines()
+    open_re = re.compile(r"^(\s*)<div[^>]*\bclass=\"([^\"]*\bbg-fullbleed\b[^\"]*)\"[^>]*>")
+    cwc_re = re.compile(r"^\s*<div[^>]*\bclass=\"[^\"]*\bcontent-width-container\b[^\"]*\"[^>]*>")
+    close_tpl = r"^{indent}</div>\s*$"
+    i = 0
+    changed = False
+    while i < len(lines):
+        m = open_re.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        indent = m.group(1)
+        # find first non-empty line after opening
+        j = i + 1
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        has_wrapper = j < len(lines) and cwc_re.match(lines[j]) is not None
+        if not has_wrapper:
+            # find matching close for bg-fullbleed
+            close_re = re.compile(close_tpl.format(indent=re.escape(indent)))
+            k = j
+            while k < len(lines) and not close_re.match(lines[k]):
+                k += 1
+            # insert wrapper after opening, and closing before bg-fullbleed close
+            inner_indent = indent + "  "
+            lines.insert(i + 1, f"{inner_indent}<div class=\"content-width-container\">")
+            # adjust closing insertion index due to insertion
+            k += 1
+            lines.insert(k, f"{inner_indent}</div>")
+            changed = True
+            # move index past inserted block
+            i = k + 1
+        else:
+            i = j + 1
+    if changed:
+        new_text = "\n".join(lines) + "\n"
+        if backup:
+            html_path.with_suffix(html_path.suffix + ".bak").write_text(original, encoding="utf-8")
+        html_path.write_text(new_text, encoding="utf-8")
+
+
+def add_data_mh_groups(html_path: Path, backup=False):
+    """Add data-mh="cardNN" to card-like repeated siblings.
+    Heuristics:
+      - Under same parent, repeated children whose class contains 'menu' (>=2)
+      - Or parent has layout-3col/layout-4col and children with 'frame' (>=2)
+    Each detected group gets a sequential group id card01, card02, ... (per file).
+    """
+    text = html_path.read_text(encoding="utf-8", errors="ignore")
+    original = text
+    lines = text.splitlines()
+    open_re = re.compile(r"^(\s*)<div[^>]*\bclass=\"([^\"]+)\"[^>]*>")
+    close_tpl = r"^{indent}</div>\s*$"
+    child_open_re = re.compile(r"^(\s*)<([a-zA-Z]+)\b[^>]*\bclass=\"([^\"]+)\"([^>]*)>")
+    group_idx = 0
+    i = 0
+    changed = False
+    while i < len(lines):
+        m = open_re.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        indent = m.group(1)
+        classes = m.group(2)
+        is_grid_parent = ("layout-3col" in classes) or ("layout-4col" in classes)
+        close_re = re.compile(close_tpl.format(indent=re.escape(indent)))
+        # scan children until close
+        child_idxs = []
+        j = i + 1
+        while j < len(lines):
+            if close_re.match(lines[j]):
+                break
+            cm = child_open_re.match(lines[j])
+            if cm:
+                child_idxs.append(j)
+            j += 1
+        # build groups by keyword
+        menu_children = [idx for idx in child_idxs if ' menu ' in (' '+child_open_re.match(lines[idx]).group(3)+' ')]
+        groups = []
+        if len(menu_children) >= 2:
+            groups.append(menu_children)
+        if is_grid_parent:
+            frame_children = [idx for idx in child_idxs if ' frame' in (' '+child_open_re.match(lines[idx]).group(3))]
+            if len(frame_children) >= 2:
+                groups.append(frame_children)
+        # assign data-mh
+        for grp in groups:
+            group_idx += 1
+            mh = f"card{group_idx:02d}"
+            for idx in grp:
+                cm = child_open_re.match(lines[idx])
+                if not cm:
+                    continue
+                attrs = cm.group(4)
+                # skip if already has data-mh
+                if re.search(r"\bdata-mh=\"[^\"]+\"", attrs):
+                    continue
+                # add data-mh before closing '>' of the tag line
+                lines[idx] = lines[idx].rstrip('>') + f' data-mh="{mh}">'
+                changed = True
         i = j if j > i else i + 1
     if changed:
         new_text = "\n".join(lines) + "\n"
@@ -330,6 +555,9 @@ def comment_out_in_style_css(css_path: Path, applied_classes: set, covered_props
         return re.compile(rf"(^|\s){re.escape(prop)}\s*:\s*[^;]+;\s*$", re.I)
 
     covered_res = {p: prop_line_regex(p) for p in covered_props}
+    # extra: inside .layout-2col image-leading rules, also comment out max-width/width lines
+    mw_re = prop_line_regex("max-width")
+    w_re = prop_line_regex("width")
     out_lines = []
     in_rule = False
     rule_targets = False
@@ -345,6 +573,9 @@ def comment_out_in_style_css(css_path: Path, applied_classes: set, covered_props
                 # check if selector contains any class we touched
                 sel_classes = set(re.findall(r"\.[a-zA-Z0-9_-]+", current_selectors))
                 rule_targets = any(sc in applied_classes for sc in sel_classes)
+                # special-case: rules targeting first-column images under layout-2col
+                sel_str = current_selectors
+                is_img_lead = (".layout-2col" in sel_str) and ("> :first-child img" in sel_str or "> .img img" in sel_str or "> .image img" in sel_str)
             out_lines.append(line)
             continue
         else:
@@ -367,15 +598,52 @@ def comment_out_in_style_css(css_path: Path, applied_classes: set, covered_props
                         commented = True
                         break
                 if not commented:
-                    out_lines.append(line)
+                    # additionally for image-leading rules
+                    if 'is_img_lead' in locals() and is_img_lead and (mw_re.search(stripped) or w_re.search(stripped)):
+                        out_lines.append("/* dedup-img: " + stripped + " */")
+                    else:
+                        out_lines.append(line)
             else:
-                out_lines.append(line)
+                # even if not rule_targets, still neutralize image-leading width rules under layout-2col
+                if 'is_img_lead' in locals() and is_img_lead and (mw_re.search(stripped) or w_re.search(stripped)):
+                    out_lines.append("/* dedup-img: " + stripped + " */")
+                else:
+                    out_lines.append(line)
 
     new_css = "\n".join(out_lines) + "\n"
     if new_css != original:
         if backup:
             css_path.with_suffix(css_path.suffix + ".bak").write_text(original, encoding="utf-8")
         css_path.write_text(new_css, encoding="utf-8")
+
+
+def rewrite_positional_selectors(css_path: Path, backup=False):
+    """Rewrite fragile positional selectors to role-based ones.
+    Currently: .layout-2col > :first-child  ->  .layout-2col > .col-first
+    (non-destructive backup, plain text replacement; keeps formatting)
+    """
+    if not css_path.exists():
+        return
+    css = css_path.read_text(encoding="utf-8", errors="ignore")
+    original = css
+    # simple, safe replacements
+    # 1) :first-child -> BEM first element (keep .layout-2col context, switch to descendant)
+    css = re.sub(r"(\.layout-2col)\s*>\s*:first-child", r"\1 .layout-2col__col--first", css)
+    css = re.sub(r"(\.layout-2col)>(\s*):first-child", r"\1 \2.layout-2col__col--first", css)
+    # 2) direct-child .col-first -> BEM first element
+    css = re.sub(r"(\.layout-2col)\s*>\s*\.col-first", r"\1 .layout-2col__col--first", css)
+    # 3) descendant .col-first -> BEM first element
+    css = re.sub(r"(\.layout-2col)\s+\.col-first", r"\1 .layout-2col__col--first", css)
+    # 4) .col-second variants -> BEM second element
+    css = re.sub(r"(\.layout-2col)\s*>\s*\.col-second", r"\1 .layout-2col__col--second", css)
+    css = re.sub(r"(\.layout-2col)\s+\.col-second", r"\1 .layout-2col__col--second", css)
+    # 5) fix selectors that lost '.' accidentally in previous passes
+    css = re.sub(r"(?<![.#\w-])(layout-2col__col--first)", r".\1", css)
+    css = re.sub(r"(?<![.#\w-])(layout-2col__col--second)", r".\1", css)
+    if css != original:
+        if backup:
+            css_path.with_suffix(css_path.suffix + ".bak").write_text(original, encoding="utf-8")
+        css_path.write_text(css, encoding="utf-8")
 
 
 def main():
@@ -418,6 +686,8 @@ def main():
         # inject classes and link into all HTML files
         applied_classes = set()
         for hp in html_files:
+            # ensure fullbleed wrapper structure first
+            ensure_fullbleed_content_wrapper(hp, backup=args.backup)
             # add role classes before utility injection to avoid positional selectors
             add_two_col_role_classes(hp, backup=args.backup)
             inject_link_and_classes(hp, css_class_map, set(FLEX_PROPS), backup=args.backup)
@@ -434,6 +704,17 @@ def main():
             for css_name in ("style.css", "style-pc.css", "style-sp.css"):
                 css_path = root / css_name
                 comment_out_in_style_css(css_path, applied_classes, covered, backup=args.backup)
+                # rewrite positional selectors to role-based ones
+                rewrite_positional_selectors(css_path, backup=args.backup)
+
+    # Sectionize (wrapper mode) independent of inject-css
+    if args.sectionize:
+        exclude_roles = set([s.strip().lower() for s in (args.exclude_roles or "").split(",") if s.strip()])
+        for hp in html_files:
+            sectionize_safe(hp, require_heading=args.require_heading, min_children=args.min_children, exclude_roles=exclude_roles, backup=args.backup)
+        # After sectionizing, add data-mh groups to repeated card-like rows
+        for hp in html_files:
+            add_data_mh_groups(hp, backup=args.backup)
 
 
 if __name__ == "__main__":
