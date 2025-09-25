@@ -2460,11 +2460,11 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             bm = extract_blend_mode_style(element)
             if bm:
                 node_props.append(bm)
-            # include flex/align if any
-            node_props.extend([s for s in child_styles if s])
+            # include flex/align if any, avoiding duplicates
+            merged_props = merge_css_props(node_props, [s for s in child_styles if s])
             if node_safe:
                 set_node_kind(node_id, 'image')
-                add_node_styles(node_safe, node_props)
+                add_node_styles(node_safe, merged_props)
             if USE_IMAGES:
                 # 画像出力（ダウンロード済み or CDN URL）
                 src = IMAGE_URL_MAP.get(node_id)
@@ -2523,10 +2523,10 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             bm = extract_blend_mode_style(element)
             if bm:
                 node_props.append(bm)
-            node_props.extend([s for s in child_styles if s])
+            merged_props = merge_css_props(node_props, [s for s in child_styles if s])
             if node_safe:
                 set_node_kind(node_id, 'rect')
-                add_node_styles(node_safe, node_props)
+                add_node_styles(node_safe, merged_props)
             classes = ["rect-element"]
             if node_class:
                 classes.append(node_class)
@@ -3032,7 +3032,7 @@ img {{
     # Two-column stability helpers
     css += ".layout-2col > * { min-width: 0; }\n"
     css += ".layout-2col { align-items: stretch; }\n.layout-2col > :first-child { flex-shrink: 0; }\n"
-    css += ".layout-2col > :first-child img { max-width: none; width: auto; }\n\n"
+    css += ".layout-2col > :first-child img { max-width: 100%; width: auto; }\n\n"
 
     # Optional: equalize 2-col when no ratio is specified
     if EQUALIZE_2COL_FALLBACK:
@@ -3113,6 +3113,32 @@ collected_text_styles = {}
 # ノードごとのスタイルをCSSに出力するための収集
 collected_node_styles = {}
 COLLECT_NODE_STYLES = True
+
+def merge_css_props(existing_props, new_props):
+    """CSS プロパティリストをマージし、重複を防ぐ
+    後の値が優先される（CSSの仕様に従う）
+    """
+    if not existing_props:
+        return new_props[:]
+    if not new_props:
+        return existing_props[:]
+    
+    # プロパティ名で重複をチェック
+    prop_dict = {}
+    
+    # 既存のプロパティを辞書に格納
+    for prop in existing_props:
+        if ':' in prop:
+            prop_name = prop.split(':', 1)[0].strip().lower()
+            prop_dict[prop_name] = prop
+    
+    # 新しいプロパティで上書き
+    for prop in new_props:
+        if ':' in prop:
+            prop_name = prop.split(':', 1)[0].strip().lower()
+            prop_dict[prop_name] = prop
+    
+    return list(prop_dict.values())
 
 def add_node_styles(node_id, style_props):
     """ノード固有スタイルを収集（後でCSSへ出力）
