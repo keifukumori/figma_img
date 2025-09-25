@@ -1023,6 +1023,12 @@ def map_auto_layout_inline_styles(element):
                         style_parts.append(f"padding-right:clamp({HPAD_CLAMP_MIN_PX}px, {HPAD_CLAMP_VW}vw, {pr}px)")
                     if pl > 0:
                         style_parts.append(f"padding-left:clamp({HPAD_CLAMP_MIN_PX}px, {HPAD_CLAMP_VW}vw, {pl}px)")
+            # expose padding as CSS custom properties for bleed utilities
+            try:
+                style_parts.append(f"--pad-l:{p_left}px")
+                style_parts.append(f"--pad-r:{p_right}px")
+            except Exception:
+                pass
 
         # alignment
         primary = element.get("primaryAxisAlignItems", "MIN")
@@ -1949,7 +1955,7 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     return styles, skip_w, skip_h
 
 
-def generate_element_html(element, indent="", suppress_leaf_images=False, suppress_parent_bounds=None, parent_layout_mode=None):
+def generate_element_html(element, indent="", suppress_leaf_images=False, suppress_parent_bounds=None, parent_layout_mode=None, parent_padding=None, child_index=None):
     """個別要素のHTML生成"""
     element_type = element.get("type", "")
     element_name = element.get("name", "")
@@ -2338,6 +2344,10 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                                 add_node_styles(safe, [f"flex: 0 0 {percent:.2f}%", "min-width:0"]) 
             except Exception as e:
                 print(f"[WARN] 2col ABB ratio mapping failed: {e}")
+        # パディング情報を取得（parent_paddingで使用）
+        p_left = float(element.get("paddingLeft", 0) or 0)
+        p_right = float(element.get("paddingRight", 0) or 0)
+
         # 子の画像抑制ポリシー
         child_suppress = suppress_leaf_images
         parent_bounds = suppress_parent_bounds
@@ -2369,7 +2379,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             except Exception as e:
                 print(f"[WARN] Margin inference failed: {e}")
 
-        for child in children:
+        for idx, child in enumerate(children):
             if should_exclude_node(child):
                 continue
             # apply child auto-layout rules if this container is auto-layout
@@ -2378,7 +2388,15 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             child_id = child.get("id")
             if child_id and child_styles:
                 add_node_styles(css_safe_identifier(child_id), child_styles)
-            html += generate_element_html(child, content_indent, suppress_leaf_images=child_suppress, suppress_parent_bounds=parent_bounds, parent_layout_mode=layout_info.get("layout_mode"))
+            html += generate_element_html(
+                child,
+                content_indent,
+                suppress_leaf_images=child_suppress,
+                suppress_parent_bounds=parent_bounds,
+                parent_layout_mode=layout_info.get("layout_mode"),
+                parent_padding=(p_left, p_right),
+                child_index=idx,
+            )
         html += closing_html
         return html
 
@@ -2455,6 +2473,13 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                     safe_name = element_name.replace(" ", "_").replace("(", "").replace(")", "")
                     src = f"https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}"
                 all_classes = [img_class]
+                # Auto Layout親に左右paddingがあり、先頭の画像の場合は横いっぱい（ブリード）を許可
+                try:
+                    if parent_padding and sum(parent_padding) >= 8 and (child_index == 0):
+                        if 'no-bleed' not in (element.get('name') or '').lower():
+                            all_classes.append('card-img-bleed-x')
+                except Exception:
+                    pass
                 if node_class:
                     all_classes.append(node_class)
                 return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="height: auto; display: block;">\n{indent}</div>\n'
@@ -2660,6 +2685,15 @@ section {{
     margin: 10px 0;
     line-height: 1.6;
 }}
+
+/* Card image bleed utility: expand image wrapper to cancel parent's horizontal padding */
+.card-img-bleed-x {{
+    margin-left: calc(var(--pad-l, 0px) * -1);
+    margin-right: calc(var(--pad-r, 0px) * -1);
+    width: calc(100% + var(--pad-l, 0px) + var(--pad-r, 0px));
+    max-width: none;
+}}
+.card-img-bleed-x img {{ width: 100%; height: auto; display: block; }}
 
 /* Global image rule (prevent overflow) */
 img {{
