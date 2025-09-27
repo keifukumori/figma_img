@@ -133,6 +133,48 @@ python fetch_figma_layout.py
 - `SAVE_RAW_DATA` … 解析時に JSON を保存（`raw_figma_data/`）
 - `PC_STRICT_CLAMP` … 横スクロール抑止の強制幅制約（PC）
 
+HTMLの入れ子制御（新機能）
+- `SECTION_WRAPPER_MODE` … セクション直下のラッパー簡素化（`full`|`compact`|`minimal`、既定: `compact`）
+  - `full`: 従来の構造（`<section> > .container > .inner`）
+  - `compact`: `<section> > .content-width-container` に一本化（`.inner` を削除）
+  - `minimal`: `<section class="... content-width-container"> ... </section>`（セクション自身に幅制限を付与）
+- `BG_FULLBLEED_INNER` … 背景フルブリード時の内側ラッパー（`content`|`none`、既定: `content`）
+  - `none` にすると `.bg-fullbleed > .content-width-container` を省略し、1段階浅くなります
+
+セマンティッククラス出力（新機能）
+- `SEMANTIC_CLASS_MODE` … レイヤー名ベースのセマンティッククラスの付与範囲（既定: `sections_only`）
+  - `all`: すべての要素に付与（従来挙動）。例: `frame-12`, `hero-title` など
+  - `sections_only`: `<section>` にのみ付与。内部要素には付与しない（`layout-*` と `.n-*` で制御）
+  - `none`: どこにも付与しない。生成物は主に `layout-*`/`.n-*`/汎用クラスで構成
+
+`.n-<id>` クラスのエイリアス（任意）
+- `N_CLASS_ALIAS_MODE` … `.n-<id>` を人間可読なクラスへ“併記”してマッピング（既定: `off`）
+  - `off`: 何もしない（従来）
+  - `add`: HTML要素に別名クラスを追加し、CSSでは `.n-<id>, .alias { ... }` の連結セレクタで同じ見た目を適用
+- `N_CLASS_ALIAS_SOURCE` … 別名の生成元（`semantic`|`safe-name`、既定: `semantic`）
+  - `semantic`: `generate_semantic_class` の結果（例: `btn--primary`, `card`）
+  - `safe-name`: レイヤー名を安全化して使用（例: `image-hero`）
+- `N_CLASS_ALIAS_UNIQUE_ONLY` … 同名が複数ある場合はCSSへの別名出力を抑止（既定: `true`）
+  - HTMLには別名が付く場合がありますが、CSSは `.n-<id>` のみが効くため見た目は保たれます
+- `N_CLASS_ALIAS_DROP_N_UNIQUE` … 別名が一意の要素に限り、`.n-<id>` をHTML/CSSの両方から除去（既定: `false`）
+  - 段階的移行に有効。重複のある別名には `.n-<id>` を残すため安全です
+- `N_CLASS_ALIAS_TOKEN_FILTER` … 別名のトークン正規化（`none`|`aggressive`、既定: `none`）
+  - `aggressive`: 数字主体や記号主体のトークンを除去し、読みやすい別名に整流（例: `about__1-000` → `about__item`）
+
+出力レポート
+- `alias_map.json` … 生成別名のマップと重複状況を出力（`OUTPUT_DIR/<project>/alias_map.json`）
+- `node_style_report.json` … `.n-` の適用状況・検査レポート
+- `waste_report.json` … 無駄の可視化（`shallow_wrappers`/`zero_prop_n_classes`/`unused_css_classes`/`unused_html_classes`）
+
+ネストの自動縮約（安全）
+- `FLATTEN_SHALLOW_WRAPPERS` … 子1つ・役割シグナル無しの“空ラッパー”を自動で潰す（既定: `false`）
+  - 役割シグナル: background/fill, stroke, effect, radius, clip, padding, layout gap など
+  - ONにすると、これらを持たない直系の薄いFRAME/GROUPが1段減ります
+
+未使用CSSの自動剪定（安全）
+- `PRUNE_UNUSED_CSS` … 出力HTMLを参照して未使用の単純クラスセレクタをstyle.cssから除去（既定: `false`）
+  - 複合セレクタや@mediaは維持。単純な `.class {…}` でHTMLに存在しないもののみ削除します
+
 ## 出力物の場所
 - JSON: `OUTPUT_DIR/raw_figma_data/`
 - 画像: `OUTPUT_DIR/<project>/images/`（結合時は `OUTPUT_DIR/images/` を共有）

@@ -48,6 +48,289 @@ INCLUDE_ALLOWLIST_IDS = {s.strip() for s in os.getenv("INCLUDE_ALLOWLIST_IDS", "
 
 # Reuse maps built from whole file
 REUSE_COMPONENT_COUNT = {}
+
+# Utility class generation cache
+UTILITY_CLASS_CACHE = {}
+
+def generate_utility_class_name(property_type, value, direction=""):
+    """役割別のユーティリティクラス名を生成"""
+    try:
+        # キャッシュキーを生成
+        cache_key = f"{property_type}:{value}:{direction}"
+        if cache_key in UTILITY_CLASS_CACHE:
+            return UTILITY_CLASS_CACHE[cache_key]
+
+        result = None
+
+        # サイズ系 (Width/Height)
+        if property_type in ['width', 'height', 'min-width', 'max-width', 'min-height', 'max-height']:
+            prefix_map = {
+                'width': 'w',
+                'height': 'h',
+                'min-width': 'min-w',
+                'max-width': 'max-w',
+                'min-height': 'min-h',
+                'max-height': 'max-h'
+            }
+            prefix = prefix_map[property_type]
+
+            if value == '100%':
+                result = f"{prefix}-full"
+            elif value == 'auto':
+                result = f"{prefix}-auto"
+            elif value.endswith('%'):
+                result = f"{prefix}__{value.replace('%', 'p')}"
+            elif value.endswith('px'):
+                result = f"{prefix}__{value.replace('px', '')}"
+            elif value.endswith('vh'):
+                result = f"{prefix}__{value.replace('vh', 'vh')}"
+            elif value.endswith('vw'):
+                result = f"{prefix}__{value.replace('vw', 'vw')}"
+            else:
+                result = f"{prefix}__{value}"
+
+        # スペーシング系 (Margin/Padding)
+        elif property_type.startswith(('margin', 'padding')):
+            is_margin = property_type.startswith('margin')
+            prefix = 'm' if is_margin else 'p'
+
+            # 方向指定
+            if direction:
+                direction_map = {
+                    'top': 't', 'bottom': 'b', 'left': 'l', 'right': 'r'
+                }
+                if direction in direction_map:
+                    prefix += direction_map[direction]
+                elif direction == 'horizontal':
+                    prefix += 'x'
+                elif direction == 'vertical':
+                    prefix += 'y'
+
+            if value == '0':
+                result = f"{prefix}-0"
+            elif value == 'auto':
+                result = f"{prefix}-auto"
+            elif value.endswith('px'):
+                result = f"{prefix}__{value.replace('px', '')}"
+            else:
+                result = f"{prefix}__{value}"
+
+        # Display系
+        elif property_type == 'display':
+            display_map = {
+                'flex': 'd-flex',
+                'block': 'd-block',
+                'inline': 'd-inline',
+                'inline-block': 'd-inline-block',
+                'grid': 'd-grid',
+                'none': 'd-none'
+            }
+            result = display_map.get(value, f"d-{value}")
+
+        # Flexbox系
+        elif property_type == 'flex-direction':
+            result = f"flex-{'row' if value == 'row' else 'col'}"
+        elif property_type == 'justify-content':
+            justify_map = {
+                'flex-start': 'justify-start',
+                'flex-end': 'justify-end',
+                'center': 'justify-center',
+                'space-between': 'justify-between',
+                'space-around': 'justify-around'
+            }
+            result = justify_map.get(value, f"justify-{value}")
+        elif property_type == 'align-items':
+            align_map = {
+                'flex-start': 'align-start',
+                'flex-end': 'align-end',
+                'center': 'align-center',
+                'stretch': 'align-stretch'
+            }
+            result = align_map.get(value, f"align-{value}")
+        elif property_type == 'flex-wrap':
+            result = 'flex-wrap' if value == 'wrap' else 'flex-nowrap'
+
+        # 背景色系
+        elif property_type == 'background-color':
+            if value == 'transparent':
+                result = 'bg-transparent'
+            elif value.startswith('#'):
+                result = f"bg__{value[1:]}"  # #を除去
+            elif value.startswith('rgba'):
+                # rgba(255,255,255,1.00) -> bg__fff_100
+                import re
+                rgba_match = re.match(r'rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)', value)
+                if rgba_match:
+                    r, g, b, a = rgba_match.groups()
+                    hex_color = f"{int(r):02x}{int(g):02x}{int(b):02x}"
+                    alpha = int(float(a) * 100)
+                    result = f"bg__{hex_color}_{alpha}"
+                else:
+                    result = f"bg__{value.replace('(', '_').replace(')', '').replace(',', '_').replace(' ', '')}"
+            else:
+                result = f"bg-{value}"
+
+        # フォントサイズ系
+        elif property_type == 'font-size':
+            if value.endswith('px'):
+                result = f"text__{value.replace('px', '')}"
+            elif value.endswith('rem'):
+                result = f"text__{value.replace('rem', 'rem')}"
+            else:
+                result = f"text__{value}"
+
+        # フォントウェイト系
+        elif property_type == 'font-weight':
+            weight_map = {
+                'normal': 'fw-normal',
+                'bold': 'fw-bold',
+                '100': 'fw-thin',
+                '300': 'fw-light',
+                '400': 'fw-normal',
+                '500': 'fw-medium',
+                '600': 'fw-semibold',
+                '700': 'fw-bold',
+                '900': 'fw-black'
+            }
+            result = weight_map.get(str(value), f"fw__{value}")
+
+        # テキスト整列
+        elif property_type == 'text-align':
+            result = f"text-{value}"
+
+        # ボーダー系
+        elif property_type == 'border-radius':
+            if value == '0':
+                result = 'rounded-none'
+            elif value.endswith('px'):
+                px_val = value.replace('px', '')
+                if px_val == '50' or value == '50%':
+                    result = 'rounded-full'
+                else:
+                    result = f"rounded__{px_val}"
+            else:
+                result = f"rounded__{value}"
+
+        # ポジション系
+        elif property_type == 'position':
+            result = f"pos-{value}"
+
+        # z-index系
+        elif property_type == 'z-index':
+            result = f"z__{value}"
+
+        # overflow系
+        elif property_type == 'overflow':
+            result = f"overflow-{value}"
+
+        # デフォルト
+        if not result:
+            safe_property = property_type.replace('-', '_')
+            safe_value = str(value).replace('-', '_').replace('px', '').replace('%', 'p')
+            result = f"util__{safe_property}__{safe_value}"
+
+        # キャッシュに保存
+        UTILITY_CLASS_CACHE[cache_key] = result
+        return result
+
+    except Exception:
+        return f"util__{property_type.replace('-', '_')}__{str(value).replace('-', '_')}"
+
+def generate_utility_classes_for_element(element):
+    """要素から適用可能なユーティリティクラスを生成"""
+    utility_classes = []
+
+    try:
+        # レイアウト情報の解析
+        layout_info = analyze_layout_structure(element)
+
+        # Display - check for Auto Layout
+        layout_mode = layout_info.get("layout_mode")
+        if layout_mode == "HORIZONTAL":
+            utility_classes.append("d-flex")
+            utility_classes.append("flex-row")
+        elif layout_mode == "VERTICAL":
+            utility_classes.append("d-flex")
+            utility_classes.append("flex-col")
+
+        # Justify content
+        if layout_info.get("justify"):
+            justify_class = generate_utility_class_name("justify-content", layout_info["justify"])
+            utility_classes.append(justify_class)
+
+        # Align items
+        if layout_info.get("align"):
+            align_class = generate_utility_class_name("align-items", layout_info["align"])
+            utility_classes.append(align_class)
+
+        # Gap
+        if layout_info.get("gap"):
+            gap_value = str(layout_info["gap"])
+            if gap_value != "0":
+                utility_classes.append(f"gap__{gap_value}")
+
+        # Padding (Auto Layout padding)
+        padding = element.get("paddingLeft") or element.get("paddingTop") or element.get("paddingRight") or element.get("paddingBottom")
+        if padding and padding > 0:
+            utility_classes.append(f"p__{int(padding)}")
+
+        # Border radius (cornerRadius)
+        corner_radius = element.get("cornerRadius")
+        if corner_radius and corner_radius > 0:
+            utility_classes.append(f"rounded__{int(corner_radius)}")
+
+        # サイズ情報
+        bounds = element.get("absoluteBoundingBox", {})
+        if bounds:
+            width = bounds.get("width")
+            height = bounds.get("height")
+
+            if width:
+                width_class = generate_utility_class_name("width", f"{width}px")
+                utility_classes.append(width_class)
+
+            if height:
+                height_class = generate_utility_class_name("height", f"{height}px")
+                utility_classes.append(height_class)
+
+        # 背景色
+        rgba = _pick_solid_fill_rgba(element)
+        if rgba and rgba != "rgba(255, 255, 255, 1.00)":
+            bg_class = generate_utility_class_name("background-color", rgba)
+            utility_classes.append(bg_class)
+
+        # パディング情報 (TODO: implement _analyze_container_styles or alternative)
+        # import re
+        # layout_style = _analyze_container_styles(element)
+        # for prop in layout_style:
+        #     if prop.startswith("padding:"):
+        #         # padding: 16px -> p__16
+        #         padding_match = re.match(r'padding:\s*(\d+)px', prop)
+        #         if padding_match:
+        #             padding_value = padding_match.group(1)
+        #             padding_class = generate_utility_class_name("padding", f"{padding_value}px")
+        #             utility_classes.append(padding_class)
+        #         break
+
+        # ボーダー半径 (TODO: implement _analyze_container_styles or alternative)
+        # for prop in layout_style:
+        #     if prop.startswith("border-radius:"):
+        #         radius_match = re.match(r'border-radius:\s*(\d+)px', prop)
+        #         if radius_match:
+        #             radius_value = radius_match.group(1)
+        #             radius_class = generate_utility_class_name("border-radius", f"{radius_value}px")
+        #             utility_classes.append(radius_class)
+        #         break
+
+        # エフェクト（シャドウなど）
+        effects_css = extract_effects_styles(element)
+        if effects_css and "box-shadow" in effects_css:
+            utility_classes.append("shadow")
+
+        return utility_classes
+
+    except Exception as e:
+        return []
 REUSE_NAME_COUNT = {}
 INCLUDE_CANDIDATES = []
 CURRENT_FRAME_NAME = ""
@@ -80,6 +363,42 @@ NODE_STYLE_SCOPE = (os.getenv("NODE_STYLE_SCOPE", "conservative") or "conservati
 SUPPRESS_CONTAINER_WIDTH = (os.getenv("SUPPRESS_CONTAINER_WIDTH", "true").lower() == "true")
 SUPPRESS_FIXED_HEIGHT = (os.getenv("SUPPRESS_FIXED_HEIGHT", "true").lower() == "true")
 USE_ASPECT_RATIO = (os.getenv("USE_ASPECT_RATIO", "true").lower() == "true")
+
+# Heading policy
+# single_h1: ページ全体でh1は1つまで（既定）
+# per_section: セクション内はh2/h3ベース。h1は先頭セクションのみ許可（環境で切替）
+# figma: 既存ロジックそのまま
+HEADING_STRATEGY = (os.getenv("HEADING_STRATEGY", "single_h1") or "single_h1").lower()
+ALLOW_H1_IN_FIRST_SECTION = (os.getenv("ALLOW_H1_IN_FIRST_SECTION", "true").lower() == "true")
+SECTION_HEADING_BASE = int(os.getenv("SECTION_HEADING_BASE", "2") or 2)  # per_section時の基準レベル
+
+# Section wrapper simplification
+# full (default): section > .container > .inner
+# compact:        section > .content-width-container (no .inner)
+# minimal:        <section class="... content-width-container"> children ... </section>
+SECTION_WRAPPER_MODE = (os.getenv("SECTION_WRAPPER_MODE", "compact") or "compact").lower()
+
+# Flattening (conservative): remove shallow wrappers with no visual/layout role
+FLATTEN_SHALLOW_WRAPPERS = (os.getenv("FLATTEN_SHALLOW_WRAPPERS", "false").lower() == "true")
+PRUNE_UNUSED_CSS = (os.getenv("PRUNE_UNUSED_CSS", "false").lower() == "true")
+
+# N-class aliasing (map .n-<id> styles to human-friendly classes safely)
+# off (default):   何もしない
+# add:             一意な別名クラスをHTMLに併記し、CSSセレクタを連結（.n-xxx, .alias { … }）
+N_CLASS_ALIAS_MODE = (os.getenv("N_CLASS_ALIAS_MODE", "off") or "off").lower()
+N_CLASS_ALIAS_SOURCE = (os.getenv("N_CLASS_ALIAS_SOURCE", "semantic") or "semantic").lower()  # semantic|safe-name
+N_CLASS_ALIAS_NAMESPACE = (os.getenv("N_CLASS_ALIAS_NAMESPACE", "section") or "section").lower()  # none|section
+N_CLASS_ALIAS_STYLE = (os.getenv("N_CLASS_ALIAS_STYLE", "bem") or "bem").lower()  # bem|flat
+N_CLASS_ALIAS_DEDUP = (os.getenv("N_CLASS_ALIAS_DEDUP", "section_index") or "section_index").lower()  # none|section_index
+N_CLASS_ALIAS_UNIQUE_ONLY = (os.getenv("N_CLASS_ALIAS_UNIQUE_ONLY", "true").lower() == "true")
+N_CLASS_ALIAS_DROP_N_UNIQUE = (os.getenv("N_CLASS_ALIAS_DROP_N_UNIQUE", "false").lower() == "true")
+N_CLASS_ALIAS_TOKEN_FILTER = (os.getenv("N_CLASS_ALIAS_TOKEN_FILTER", "none") or "none").lower()  # none|aggressive
+
+# Semantic class output mode
+# all:            レイヤー名ベースのセマンティッククラスを全要素に付与（従来）
+# sections_only:  セクションタグにのみ付与（デフォルト）。内部要素は付与しない
+# none:           どこにも付与しない（汎用クラス/レイアウト/ノード固有のみ）
+SEMANTIC_CLASS_MODE = (os.getenv("SEMANTIC_CLASS_MODE", "sections_only") or "sections_only").lower()
 
 # Horizontal padding normalization
 HPAD_MODE = (os.getenv("HPAD_MODE", "none") or "none").lower()  # none|trim|clamp
@@ -192,6 +511,130 @@ def css_safe_identifier(text: str) -> str:
     safe = re.sub(r'-{2,}', '-', safe).strip('-')
     return safe
 
+# --- Alias helpers for .n- classes ---
+NODE_ALIAS_CANDIDATE = {}
+ALIAS_FREQ = {}
+ALIAS_BASE_FREQ = {}
+CURRENT_SECTION_KEY = ""
+
+def _is_bad_alias(name: str) -> bool:
+    if not name:
+        return True
+    n = name.strip().lower()
+    if not n:
+        return True
+    # Avoid generic/structural or reserved prefixes
+    if n in {"section", "container", "inner", "content-width-container", "bg-fullbleed", "image-placeholder", "content-item", "layout-item"}:
+        return True
+    if n.startswith("n-") or n.startswith("layout-") or n.startswith("device-"):
+        return True
+    return False
+
+
+def maybe_register_alias(node_id: str, element_name: str, element_type: str = "", element=None):
+    if N_CLASS_ALIAS_MODE != "add":
+        return
+    if not node_id:
+        return
+    try:
+        cand = None
+
+        # Try utility class generation if element is provided
+        if element is not None:
+            utility_classes = generate_utility_classes_for_element(element)
+            if utility_classes:
+                # Use the first utility class as the alias
+                cand = utility_classes[0]
+
+        # Fallback to semantic/safe-name generation
+        if not cand:
+            if N_CLASS_ALIAS_SOURCE == "semantic":
+                cand = generate_semantic_class(element_name or "", element_type or "")
+            else:
+                # safe-name source
+                raw = (element_name or "").strip()
+                cand = css_safe_identifier(raw.lower())
+
+        if not cand or _is_bad_alias(cand):
+            return
+
+        # If we have a utility class, use it directly without modification
+        if element is not None and cand in UTILITY_CLASS_CACHE.values():
+            chosen = cand
+        else:
+            # Namespace with section (optional)
+            # Token filter (aggressive): drop numeric/noise tokens
+            alias_base = cand
+            try:
+                if N_CLASS_ALIAS_TOKEN_FILTER == 'aggressive':
+                    import re
+                    tokens = re.split(r"[^a-zA-Z0-9]+", cand)
+                    filtered = []
+                    for t in tokens:
+                        if not t:
+                            continue
+                        letters = sum(ch.isalpha() for ch in t)
+                        digits = sum(ch.isdigit() for ch in t)
+                        if letters == 0 and digits > 0:
+                            continue  # pure number
+                        if letters < digits:
+                            continue  # mostly numeric
+                        if len(t) <= 1:
+                            continue
+                        filtered.append(t.lower())
+                    if filtered:
+                        alias_base = "-".join(filtered)
+                    else:
+                        alias_base = 'item'
+            except Exception:
+                pass
+            # Stopwords (generic tokens)
+            try:
+                stop = {"frame","group","rectangle","rect","line","vector","image","img","layer","box","container","inner","section"}
+                if alias_base in stop:
+                    alias_base = 'block' if (element_type or '').upper() in ('FRAME','GROUP') else 'item'
+            except Exception:
+                pass
+
+            # Set chosen based on alias_base
+            chosen = alias_base
+            if N_CLASS_ALIAS_NAMESPACE == 'section' and CURRENT_SECTION_KEY:
+                if N_CLASS_ALIAS_STYLE == 'bem':
+                    alias_base = f"{CURRENT_SECTION_KEY}__{alias_base}"
+                else:
+                    alias_base = f"{CURRENT_SECTION_KEY}_{alias_base}"
+                # Deduplicate within section by adding _2, _3 ...
+                base_count = ALIAS_BASE_FREQ.get(alias_base, 0)
+                if N_CLASS_ALIAS_DEDUP == 'section_index' and base_count > 0:
+                    chosen = f"{alias_base}_{base_count+1}"
+                else:
+                    chosen = alias_base
+                ALIAS_BASE_FREQ[alias_base] = base_count + 1
+
+        # Assign to node
+        safe_id = css_safe_identifier(node_id)
+        prev = NODE_ALIAS_CANDIDATE.get(safe_id)
+        if prev and prev != chosen:
+            ALIAS_FREQ[prev] = max(0, ALIAS_FREQ.get(prev, 1) - 1)
+        NODE_ALIAS_CANDIDATE[safe_id] = chosen
+        ALIAS_FREQ[chosen] = ALIAS_FREQ.get(chosen, 0) + 1
+    except Exception:
+        return
+
+def _should_drop_n_for_safe(safe_id: str) -> bool:
+    try:
+        if N_CLASS_ALIAS_MODE != 'add':
+            return False
+        if not N_CLASS_ALIAS_DROP_N_UNIQUE:
+            return False
+        alias = NODE_ALIAS_CANDIDATE.get(safe_id)
+        if not alias:
+            return False
+        return ALIAS_FREQ.get(alias, 0) == 1
+    except Exception:
+        return False
+
+
 def _normalize_text(s: str) -> str:
     if not isinstance(s, str):
         return ""
@@ -281,6 +724,8 @@ def should_exclude_node(node):
 # ルートフレームの境界（ヘッダー/フッター判定用）
 ROOT_FRAME_BOUNDS = None
 ROOT_CHILD_IDS = set()
+HAS_H1_EMITTED = False
+CURRENT_SECTION_INDEX = -1
 
 def build_reuse_maps(root):
     def walk(n):
@@ -446,10 +891,94 @@ def fetch_file_json(file_key):
     resp.raise_for_status()
     return resp.json()
 
+def clean_figma_json(data):
+    """FigmaJSONから無駄な要素を削除する前処理"""
+    removed_count = {"invisible": 0, "empty": 0, "layout_only": 0}
+
+    def should_remove_element(element):
+        if not isinstance(element, dict):
+            return False
+
+        # 1. 非表示要素
+        if element.get('visible') == False:
+            removed_count["invisible"] += 1
+            return True
+
+        # 2. 完全に空の要素（effects, fills, strokes全て空）
+        effects = element.get('effects', [])
+        fills = element.get('fills', [])
+        strokes = element.get('strokes', [])
+        element_type = element.get('type', '')
+
+        if (len(effects) == 0 and len(fills) == 0 and len(strokes) == 0 and
+            element_type in ['FRAME', 'GROUP']):
+            # 子要素が1個以下なら削除対象
+            children = element.get('children', [])
+            if len(children) <= 1:
+                removed_count["empty"] += 1
+                return True
+
+        # 3. レイアウト専用FRAME（視覚効果なし、複数子要素あり）
+        if (element_type == 'FRAME' and
+            len(effects) == 0 and len(fills) == 0 and len(strokes) == 0):
+            # 名前がAuto Layoutやグループ化を示唆する場合
+            name = element.get('name', '').lower()
+            if any(keyword in name for keyword in ['frame', 'group', 'container', 'wrapper']):
+                children = element.get('children', [])
+                if len(children) == 1:  # 1個の子要素のみを包むFRAME
+                    removed_count["layout_only"] += 1
+                    return True
+
+        return False
+
+    def clean_recursive(obj):
+        if isinstance(obj, dict):
+            # 子要素の再帰的クリーニング
+            if 'children' in obj and isinstance(obj['children'], list):
+                original_children = obj['children']
+                cleaned_children = []
+
+                for child in original_children:
+                    if not should_remove_element(child):
+                        cleaned_children.append(clean_recursive(child))
+                    else:
+                        # 削除する要素の子要素を親に統合（フラット化）
+                        if isinstance(child, dict) and 'children' in child:
+                            for grandchild in child.get('children', []):
+                                if not should_remove_element(grandchild):
+                                    cleaned_children.append(clean_recursive(grandchild))
+
+                obj['children'] = cleaned_children
+
+            # 他のプロパティも再帰的にクリーニング
+            for key, value in obj.items():
+                if key != 'children' and isinstance(value, (dict, list)):
+                    obj[key] = clean_recursive(value)
+
+        elif isinstance(obj, list):
+            return [clean_recursive(item) for item in obj]
+
+        return obj
+
+    cleaned_data = clean_recursive(data)
+    return cleaned_data, removed_count
+
 def load_local_json(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+
+        # JSON前処理を実行
+        print(f"[LOG] JSON前処理を実行中: {path}")
+        cleaned_data, removed_count = clean_figma_json(data)
+
+        total_removed = sum(removed_count.values())
+        print(f"[LOG] JSON前処理完了 - 削除要素数: {total_removed}")
+        print(f"[LOG]   非表示要素: {removed_count['invisible']}")
+        print(f"[LOG]   空要素: {removed_count['empty']}")
+        print(f"[LOG]   レイアウト専用: {removed_count['layout_only']}")
+
+        return cleaned_data
     except Exception as e:
         raise RuntimeError(f"ローカルJSONの読み込みに失敗しました: {path} ({e})")
 
@@ -1144,63 +1673,9 @@ def analyze_content_patterns(horizontal_groups):
     return patterns
 
 def generate_layout_class(layout_info):
-    """レイアウト情報からCSSクラス名を生成"""
-    classes = []
-    
-    # 基本レイアウトクラス
-    if layout_info["type"] == "two-column":
-        classes.append("layout-2col")
-        
-        # 精密な比率情報があれば追加
-        if layout_info.get("ratios") and layout_info.get("layout_mode") == "HORIZONTAL":
-            ratio = layout_info["ratios"][0]
-            if ratio == "1:1" and DETECT_EQUAL_2COL:
-                classes.append("layout-2col-equal")
-            elif ratio == "1:2":
-                classes.append("layout-2col-1-2")
-            elif ratio == "2:3":
-                classes.append("layout-2col-2-3")
-            elif ratio == "1:3":
-                classes.append("layout-2col-1-3")
-            elif ratio == "3:4":
-                classes.append("layout-2col-3-4")
-            else:
-                # カスタム比率の場合
-                ratio_safe = ratio.replace(":", "-").replace(".", "")
-                classes.append(f"layout-2col-{ratio_safe}")
-    
-    elif layout_info["type"] == "three-column":
-        classes.append("layout-3col")
-        
-        # 3カラムの比率
-        if layout_info.get("ratios"):
-            ratio = layout_info["ratios"][0]
-            if ratio == "1:1:1":
-                classes.append("layout-3col-equal")
-            else:
-                ratio_safe = ratio.replace(":", "-").replace(".", "")
-                classes.append(f"layout-3col-{ratio_safe}")
-    
-    elif layout_info["type"] == "multi-column":
-        classes.append(f"layout-{layout_info['columns']}col")
-    
-    # コンテンツパターンクラス
-    if layout_info.get("content_patterns"):
-        for pattern in layout_info["content_patterns"]:
-            if pattern == "image-text":
-                classes.append("layout-image-text")
-            elif pattern == "text-image":
-                classes.append("layout-text-image")
-            elif pattern == "image-image":
-                classes.append("layout-image-gallery")
-    
-    # Auto Layoutクラス
-    if layout_info.get("layout_mode") == "HORIZONTAL":
-        classes.append("layout-flex-row")
-    elif layout_info.get("layout_mode") == "VERTICAL":
-        classes.append("layout-flex-col")
-    
-    return " ".join(classes) if classes else ""
+    """レイアウト情報からCSSクラス名を生成 (ユーティリティクラス優先のため無効化)"""
+    # ユーティリティクラス生成システムに移行したため、従来のlayout-*クラスは生成しない
+    return ""
 
 # ---------------- Phase 2: セクション詳細解析とHTML生成 ----------------
 print("[LOG] === Phase 2: セクション詳細解析開始 ===")
@@ -1659,27 +2134,27 @@ def generate_semantic_class(element_name, element_type="", style_info=None, elem
     """レイヤー名から意味のあるクラス名を生成"""
     if not element_name:
         return None
-    
+
     # レイヤー名をクリーンアップ
     clean_name = element_name.strip()
-    
+
     # BEM風の命名規則を適用
     # セクション、コンポーネント、モディファイアを自動判定
     semantic_keywords = {
         # セクション
         "section": "section",
         "hero": "hero",
-        "about": "about", 
+        "about": "about",
         "service": "service",
         "contact": "contact",
         "footer": "footer",
         "header": "header",
         "nav": "nav",
-        
+
         # コンポーネント
         "button": "btn",
         "card": "card",
-        "title": "title", 
+        "title": "title",
         "heading": "heading",
         "text": "text",
         "image": "img",
@@ -1687,10 +2162,10 @@ def generate_semantic_class(element_name, element_type="", style_info=None, elem
         "logo": "logo",
         "menu": "menu",
         "list": "list",
-        
+
         # 日本語対応
         "ボタン": "btn",
-        "カード": "card", 
+        "カード": "card",
         "タイトル": "title",
         "見出し": "heading",
         "テキスト": "text",
@@ -1699,10 +2174,10 @@ def generate_semantic_class(element_name, element_type="", style_info=None, elem
         "メニュー": "menu",
         "リスト": "list",
     }
-    
+
     # レイヤー名から意味のある単語を抽出
     name_lower = clean_name.lower()
-    
+
     # 最適なマッチを探す
     for keyword, semantic_class in semantic_keywords.items():
         if keyword in name_lower:
@@ -1716,31 +2191,90 @@ def generate_semantic_class(element_name, element_type="", style_info=None, elem
                 modifier = "--sm"
             elif "large" in name_lower or "lg" in name_lower or "大" in name_lower:
                 modifier = "--lg"
-            
+
             return f"{semantic_class}{modifier}"
-    
+
     # キーワードにマッチしない場合の処理
     # 数字のみのレイヤー名（FigmaのIDなど）はそのまま使用
     if re.match(r'^\d+$', clean_name):
         # 数字のみの場合は、プレフィックスを付けてCSS的に有効にする
         return f"layer-{clean_name}"
-    
+
     # レイヤー名をそのまま使用（英数字以外をハイフンに）
     safe_name = re.sub(r'[^a-zA-Z0-9\-_]', '-', clean_name)
     safe_name = re.sub(r'-+', '-', safe_name).strip('-').lower()
-    
+
     # 空の場合や短すぎる場合のフォールバック
     if not safe_name or len(safe_name) < 2:
         return "content-item"
-    
+
     return safe_name
+
+def _visible_children(node):
+    try:
+        kids = node.get('children') or []
+        return [c for c in kids if isinstance(c, dict) and not should_exclude_node(c)]
+    except Exception:
+        return []
+
+def _has_padding(node):
+    try:
+        for k in ('paddingLeft','paddingRight','paddingTop','paddingBottom'):
+            if float(node.get(k) or 0) > 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+def _has_layout_role(node):
+    try:
+        mode = (node.get('layoutMode') or 'NONE').upper()
+        if mode in ('HORIZONTAL','VERTICAL'):
+            gap = float(node.get('itemSpacing') or 0)
+            if gap > 0:
+                return True
+            return False
+        return False
+    except Exception:
+        return False
+
+def is_shallow_wrapper_candidate(node):
+    if not FLATTEN_SHALLOW_WRAPPERS:
+        return False
+    try:
+        t = (node.get('type') or '').upper()
+        if t not in ('FRAME','GROUP'):
+            return False
+        kids = _visible_children(node)
+        if len(kids) != 1:
+            return False
+        # visual signals
+        if _has_visible_fill(node):
+            return False
+        if node.get('strokes'):
+            return False
+        if node.get('effects'):
+            return False
+        if node.get('cornerRadius') or node.get('rectangleCornerRadii'):
+            return False
+        if node.get('clipsContent'):
+            return False
+        if _has_padding(node):
+            return False
+        # layout role
+        if _has_layout_role(node):
+            return False
+        return True
+    except Exception:
+        return False
 
 def generate_text_class(style_info, element_name="", element_id=""):
     """スタイル情報からCSSクラス名を生成（レイヤー名優先、色情報も考慮）"""
     # 1. レイヤー名から意味のあるクラス名を生成（最優先）
-    semantic_class = generate_semantic_class(element_name)
-    if semantic_class and semantic_class not in ["content-item", "layout-item"]:
-        return semantic_class
+    if SEMANTIC_CLASS_MODE == "all":
+        semantic_class = generate_semantic_class(element_name)
+        if semantic_class and semantic_class not in ["content-item", "layout-item"]:
+            return semantic_class
     
     # 2. Figmaスタイル名がある場合はそれを使用
     if style_info.get("figma_style_name"):
@@ -1774,14 +2308,38 @@ def generate_html_for_section(section_data, wrapper_width):
     """セクションデータからHTMLを生成"""
     section_name = section_data.get("name", "unnamed_section")
     
-    # セクション名から意味のあるクラス名を生成
-    semantic_class = generate_semantic_class(section_name, "section")
-    section_class = semantic_class if semantic_class else sanitize_filename(section_name).lower().replace(" ", "-")
-    
-    html = f'''<section class="{section_class}">
-  <div class="container" style="max-width: {wrapper_width}px; margin: 0 auto;">
-    <div class="inner">
-'''
+    # セクション名から意味のあるクラス名を生成（モード適用）
+    if SEMANTIC_CLASS_MODE == "none":
+        section_class = "section"
+    else:
+        semantic_class = generate_semantic_class(section_name, "section")
+        section_class = semantic_class if semantic_class else sanitize_filename(section_name).lower().replace(" ", "-")
+    # セクション名前空間キー（別名用）
+    global CURRENT_SECTION_KEY
+    prev_section_key = CURRENT_SECTION_KEY
+    try:
+        # prefer semantic class as section key; fallback to sanitized name; ensure css safe
+        sec_key_raw = semantic_class if SEMANTIC_CLASS_MODE != 'none' else section_name
+        sec_key_raw = sec_key_raw or section_name or 'section'
+        CURRENT_SECTION_KEY = css_safe_identifier((sec_key_raw or 'section').lower())
+    except Exception:
+        CURRENT_SECTION_KEY = 'section'
+    # ラッパーモードに応じて出力を切り替え
+    if SECTION_WRAPPER_MODE == "minimal":
+        # セクション自体に幅制限クラスを付けて最小の入れ子に
+        html = f'''<section class="{section_class} content-width-container">\n'''
+        indent_children = "  "
+        closing = "</section>\n"
+    elif SECTION_WRAPPER_MODE == "compact":
+        # .containerをやめ、共通の .content-width-container のみ使用（.inner 無し）
+        html = f'''<section class="{section_class}">\n  <div class="content-width-container">\n'''
+        indent_children = "    "
+        closing = "  </div>\n</section>\n"
+    else:
+        # 従来の構造（後方互換）
+        html = f'''<section class="{section_class}">\n  <div class="container" style="max-width: {wrapper_width}px; margin: 0 auto;">\n    <div class="inner">\n'''
+        indent_children = "      "
+        closing = "    </div>\n  </div>\n</section>\n"
     
     # 子要素の処理（基本的なレイアウトのみ）
     children = section_data.get("children", [])
@@ -1792,12 +2350,11 @@ def generate_html_for_section(section_data, wrapper_width):
         if should_exclude_node(child):
             print(f"[LOG] Excluded in section: {child.get('name')} ({child.get('id')})")
             continue
-        html += generate_element_html(child, "      ", suppress_leaf_images=False, suppress_parent_bounds=None)
-    
-    html += '''    </div>
-  </div>
-</section>
-'''
+        html += generate_element_html(child, indent_children, suppress_leaf_images=False, suppress_parent_bounds=None)
+
+    html += closing
+    # reset section key
+    CURRENT_SECTION_KEY = prev_section_key
     return html
 
 def detect_heading_level(element):
@@ -1835,7 +2392,76 @@ def detect_heading_level(element):
         return "h2"
     
     # デフォルトは段落
-    return "p"
+    raw = "p"
+
+    # 既存ロジックの結果を raw に反映
+    if "h1" in element_name or "見出し1" in element_name or "title" in element_name:
+        raw = "h1"
+    elif "h2" in element_name or "見出し2" in element_name or "subtitle" in element_name:
+        raw = "h2"
+    elif "h3" in element_name or "見出し3" in element_name:
+        raw = "h3"
+    elif "h4" in element_name or "見出し4" in element_name:
+        raw = "h4"
+    else:
+        if font_weight >= 600:
+            if font_size >= 32:
+                raw = "h1"
+            elif font_size >= 24:
+                raw = "h2"
+            elif font_size >= 18:
+                raw = "h3"
+            elif font_size >= 16:
+                raw = "h4"
+            else:
+                raw = "p"
+        else:
+            if font_size >= 28:
+                raw = "h1"
+            elif font_size >= 20:
+                raw = "h2"
+            else:
+                raw = "p"
+
+    # ポリシー適用
+    global HAS_H1_EMITTED, CURRENT_SECTION_INDEX
+    if HEADING_STRATEGY == "figma":
+        # そのまま
+        if raw == "h1":
+            HAS_H1_EMITTED = True
+        return raw
+
+    if HEADING_STRATEGY == "single_h1":
+        # ページ全体で最初のh1のみ許可。それ以外はh2へ降格
+        if raw == "h1":
+            if HAS_H1_EMITTED or (CURRENT_SECTION_INDEX not in (-1, 0)):
+                return "h2"
+            else:
+                HAS_H1_EMITTED = True
+                return "h1"
+        return raw
+
+    if HEADING_STRATEGY == "per_section":
+        # セクション内は基本h2ベース。必要に応じてh3/h4へ。
+        # 先頭セクションのみh1を許可（設定次第）
+        if raw == "h1":
+            if CURRENT_SECTION_INDEX in (-1, 0) and ALLOW_H1_IN_FIRST_SECTION and not HAS_H1_EMITTED:
+                HAS_H1_EMITTED = True
+                return "h1"
+            return "h2"
+        # h2/h3/h4はそのまま（最低でもSECTION_HEADING_BASE以上を保証）
+        if raw == "p":
+            return "p"
+        # 正規化
+        order = ["h2", "h3", "h4", "p"]
+        if SECTION_HEADING_BASE <= 2:
+            return raw if raw in order else "h2"
+        if SECTION_HEADING_BASE == 3:
+            return "h3" if raw in ("h2", "h3") else ("h4" if raw == "h4" else "p")
+        return raw
+
+    # フォールバック
+    return raw
 
 def is_image_element(element):
     """要素が画像かどうかを判定する包括的な関数"""
@@ -2007,16 +2633,81 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             if color:
                 add_node_styles(node_safe, [f"color: {color}"])
         if node_class:
-            style_class = f"{style_class} {node_class}"
+            # optionally drop .n- if unique alias present
+            if not _should_drop_n_for_safe(node_safe):
+                style_class = f"{style_class} {node_class}"
+        # optional alias class
+        try:
+            if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+                alias = NODE_ALIAS_CANDIDATE.get(node_safe)
+                if alias and (f" {alias}" not in style_class):
+                    style_class = f"{style_class} {alias}"
+        except Exception:
+            pass
 
+        # Register alias for n-class mapping (optional)
+        try:
+            maybe_register_alias(node_id, element_name, "TEXT", element)
+            # Fallback: if no alias registered (empty or generic layer name), create from heading level
+            node_safe_chk = css_safe_identifier(node_id) if node_id else None
+            if node_safe_chk and node_safe_chk not in NODE_ALIAS_CANDIDATE:
+                tag_guess = detect_heading_level(element)
+                fallback_name = 'heading' if tag_guess and tag_guess.startswith('h') else 'text'
+                maybe_register_alias(node_id, fallback_name, "TEXT", element)
+        except Exception:
+            pass
         return f'{indent}<{tag_name} class="{style_class}"{style_attr}>{text_content}</{tag_name}>\n'
     
     # コンテナ（子を持つ要素）は常にコンテナとして扱う（画像fillがあっても背景として扱う）
     children = element.get("children", []) or element.get("elements", []) or []
     if element_type == "FRAME" or children:
-        # クラス名
-        semantic_class = generate_semantic_class(element_name, element_type)
-        frame_class = semantic_class if semantic_class else sanitize_filename(element_name).lower().replace(" ", "-")
+        # Conservative flatten: single-child wrapper with no visual/layout role
+        try:
+            if is_shallow_wrapper_candidate(element):
+                vc = _visible_children(element)
+                if len(vc) == 1:
+                    # Preserve parent wrapper's auto layout context for the child
+                    layout_info = analyze_layout_structure(element)
+                    # apply child auto-layout mapping as if inside this wrapper
+                    try:
+                        child_styles, skip_w, skip_h = _child_auto_layout_rules(layout_info.get("layout_mode"), vc[0], layout_info)
+                        cid = vc[0].get("id")
+                        if cid and child_styles:
+                            # ensure min-width:0 to avoid overflow
+                            if not any(s.strip().lower().startswith('min-width:') for s in child_styles):
+                                child_styles.append('min-width:0')
+                            add_node_styles(css_safe_identifier(cid), child_styles)
+                    except Exception:
+                        pass
+                    # propagate wrapper padding as parent padding
+                    try:
+                        p_left = float(element.get("paddingLeft", 0) or 0)
+                        p_right = float(element.get("paddingRight", 0) or 0)
+                        pp = (p_left, p_right)
+                    except Exception:
+                        pp = parent_padding
+                    return generate_element_html(
+                        vc[0],
+                        indent,
+                        suppress_leaf_images=suppress_leaf_images,
+                        suppress_parent_bounds=suppress_parent_bounds,
+                        parent_layout_mode=layout_info.get("layout_mode"),
+                        parent_padding=pp,
+                        child_index=child_index,
+                    )
+        except Exception:
+            pass
+        # クラス名（セマンティック出力モード適用）
+        if SEMANTIC_CLASS_MODE == "all":
+            semantic_class = generate_semantic_class(element_name, element_type)
+            frame_class = semantic_class if semantic_class else sanitize_filename(element_name).lower().replace(" ", "-")
+        else:
+            frame_class = ""  # ユーティリティクラス優先のため無効化
+        # Register alias for n-class mapping (optional)
+        try:
+            maybe_register_alias(element.get("id"), element_name, element_type or "FRAME", element)
+        except Exception:
+            pass
 
         # レイアウト分析/クラス
         layout_info = analyze_layout_structure(element)
@@ -2265,14 +2956,53 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             html = f'{indent}<div class="bg-fullbleed" style="{wrapper_style}">\n'
             if BG_FULLBLEED_INNER == "content":
                 html += f'{indent}  <div class="content-width-container">\n'
+                # optional alias class for containers inside wrapper
+                try:
+                    if N_CLASS_ALIAS_MODE == 'add' and node_class:
+                        safe = node_class[2:] if node_class.startswith('n-') else None
+                        if safe:
+                            # drop n-class if configured and unique alias exists
+                            if _should_drop_n_for_safe(safe):
+                                final_class = " ".join([c for c in final_class.split() if not c.startswith('n-')])
+                            alias = NODE_ALIAS_CANDIDATE.get(safe)
+                            if alias:
+                                final_class = f"{final_class} {alias}"
+                except Exception:
+                    pass
                 html += f'{indent}    <div class="{final_class}">\n'
                 content_indent = indent + "      "
                 closing_html = f'{indent}    </div>\n{indent}  </div>\n{indent}</div>\n'
             else:
+                # optional alias class for containers inside wrapper
+                try:
+                    if N_CLASS_ALIAS_MODE == 'add' and node_class:
+                        safe = node_class[2:] if node_class.startswith('n-') else None
+                        if safe:
+                            if _should_drop_n_for_safe(safe):
+                                final_class = " ".join([c for c in final_class.split() if not c.startswith('n-')])
+                            alias = NODE_ALIAS_CANDIDATE.get(safe)
+                            if alias:
+                                final_class = f"{final_class} {alias}"
+                except Exception:
+                    pass
                 html += f'{indent}  <div class="{final_class}">\n'
                 content_indent = indent + "    "
                 closing_html = f'{indent}  </div>\n{indent}</div>\n'
         else:
+            # optional alias class for containers: append if registered
+            try:
+                alias_extra = ''
+                if N_CLASS_ALIAS_MODE == 'add' and node_class:
+                    # node_class is like 'n-<id>' – extract safe id
+                    safe = node_class[2:] if node_class.startswith('n-') else None
+                    if safe:
+                        if _should_drop_n_for_safe(safe):
+                            final_class = " ".join([c for c in final_class.split() if not c.startswith('n-')])
+                        alias = NODE_ALIAS_CANDIDATE.get(safe)
+                        if alias:
+                            final_class = f"{final_class} {alias}"
+            except Exception:
+                pass
             html = f'{indent}<div class="{final_class}">\n'
             content_indent = indent + "  "
             closing_html = f'{indent}</div>\n'
@@ -2405,6 +3135,11 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         bounds = _bounds(element)
         width = bounds.get("width", 100)
         height = bounds.get("height", 100)
+        # Optional alias registration for n-class mapping
+        try:
+            maybe_register_alias(element.get("id"), element_name, element_type or ("IMAGE" if is_image_element(element) else "RECTANGLE"), element)
+        except Exception:
+            pass
 
         # 画像要素かどうかをチェック
         if is_image_element(element):
@@ -2482,12 +3217,32 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                     pass
                 if node_class:
                     all_classes.append(node_class)
+                # optional alias class + drop n- if unique
+                try:
+                    if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+                        alias = NODE_ALIAS_CANDIDATE.get(node_safe)
+                        if alias and alias not in all_classes:
+                            all_classes.append(alias)
+                        if _should_drop_n_for_safe(node_safe):
+                            all_classes = [c for c in all_classes if not c.startswith('n-')]
+                except Exception:
+                    pass
                 return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="height: auto; display: block;">\n{indent}</div>\n'
             else:
                 # 画像は使わず、サイズだけ確保
                 all_classes = [img_class]
                 if node_class:
                     all_classes.append(node_class)
+                # optional alias class + drop n- if unique
+                try:
+                    if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+                        alias = NODE_ALIAS_CANDIDATE.get(node_safe)
+                        if alias and alias not in all_classes:
+                            all_classes.append(alias)
+                        if _should_drop_n_for_safe(node_safe):
+                            all_classes = [c for c in all_classes if not c.startswith('n-')]
+                except Exception:
+                    pass
                 return f'{indent}<div class="{" ".join(all_classes)}"></div>\n'
         else:
             # 通常の矩形要素
@@ -2530,6 +3285,16 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             classes = ["rect-element"]
             if node_class:
                 classes.append(node_class)
+            # optional alias class + drop n- if unique
+            try:
+                if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+                    alias = NODE_ALIAS_CANDIDATE.get(node_safe)
+                    if alias and alias not in classes:
+                        classes.append(alias)
+                    if _should_drop_n_for_safe(node_safe):
+                        classes = [c for c in classes if not c.startswith('n-')]
+            except Exception:
+                pass
             return f'{indent}<div class="{" ".join(classes)}"></div>\n'
     
     # ここまでで該当しない要素タイプ
@@ -2597,20 +3362,36 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             classes = ["line"]
             if node_class:
                 classes.append(node_class)
+            # optional alias + drop n- if unique
+            try:
+                if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+                    alias = NODE_ALIAS_CANDIDATE.get(node_safe)
+                    if alias and alias not in classes:
+                        classes.append(alias)
+                    if _should_drop_n_for_safe(node_safe):
+                        classes = [c for c in classes if not c.startswith('n-')]
+            except Exception:
+                pass
             return f'{indent}<div class="{" ".join(classes)}"></div>\n'
         # その他の要素タイプでも画像チェック
         if is_image_element(element):
             bounds = element.get("absoluteBoundingBox", {})
             width = bounds.get("width", 100)
             height = bounds.get("height", 100)
-            semantic_class = generate_semantic_class(element_name, "image")
-            img_class = semantic_class if semantic_class else "image-placeholder"
+            if SEMANTIC_CLASS_MODE == "all":
+                semantic_class = generate_semantic_class(element_name, "image")
+                img_class = semantic_class if semantic_class else "image-placeholder"
+            else:
+                img_class = "image-placeholder"
             safe_name = element_name.replace(" ", "_").replace("(", "").replace(")", "")
             return f'{indent}<div class="{img_class}" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
         else:
-            # その他の要素でもレイヤー名を活用
-            semantic_class = generate_semantic_class(element_name, element_type)
-            element_class = semantic_class if semantic_class else "unknown-element"
+            # その他の要素
+            if SEMANTIC_CLASS_MODE == "all":
+                semantic_class = generate_semantic_class(element_name, element_type)
+                element_class = semantic_class if semantic_class else "content-item"
+            else:
+                element_class = "content-item"
             return f'{indent}<div class="{element_class}" data-type="{element_type}"><!-- {element_name} --></div>\n'
 
 def generate_css(layout_structure, collected_text_styles, node_styles=None):
@@ -3044,11 +3825,81 @@ img {{
     for node_id, props in node_styles.items():
         safe_id = css_safe_identifier(node_id)
         props_str = ";\n    ".join(props)
-        css += f'''.n-{safe_id} {{
+        selectors = [f'.n-{safe_id}']
+        try:
+            if N_CLASS_ALIAS_MODE == 'add':
+                alias = NODE_ALIAS_CANDIDATE.get(safe_id)
+                if alias:
+                    unique = (ALIAS_FREQ.get(alias, 0) == 1)
+                    if N_CLASS_ALIAS_DROP_N_UNIQUE and unique:
+                        selectors = [f'.{alias}']
+                    else:
+                        if (not N_CLASS_ALIAS_UNIQUE_ONLY) or unique:
+                            selectors.append(f'.{alias}')
+        except Exception:
+            pass
+        sel = ", ".join(selectors)
+        css += f'''{sel} {{
     {props_str};
 }}
 
 '''
+
+    # Generate utility classes CSS
+    css += "\n/* Utility Classes (Generated) */\n"
+
+    # Flexbox utilities
+    css += """
+/* Display */
+.d-flex { display: flex; }
+.d-block { display: block; }
+.d-inline { display: inline; }
+.d-inline-block { display: inline-block; }
+.d-grid { display: grid; }
+.d-none { display: none; }
+
+/* Flex Direction */
+.flex-row { flex-direction: row; }
+.flex-col { flex-direction: column; }
+
+/* Justify Content */
+.justify-start { justify-content: flex-start; }
+.justify-end { justify-content: flex-end; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.justify-around { justify-content: space-around; }
+
+/* Align Items */
+.align-start { align-items: flex-start; }
+.align-end { align-items: flex-end; }
+.align-center { align-items: center; }
+.align-stretch { align-items: stretch; }
+
+/* Border Radius */
+.rounded__4 { border-radius: 4px; }
+.rounded__8 { border-radius: 8px; }
+.rounded__12 { border-radius: 12px; }
+.rounded__16 { border-radius: 16px; }
+
+/* Box Shadow */
+.shadow { box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); }
+
+"""
+
+    # Dynamic width/height utilities from UTILITY_CLASS_CACHE
+    if UTILITY_CLASS_CACHE:
+        for cache_key, class_name in UTILITY_CLASS_CACHE.items():
+            property_type, value, direction = cache_key.split(":", 2)
+
+            if property_type == "width" and value.endswith("px"):
+                px_value = value.replace("px", "")
+                css += f".w__{px_value} {{ width: {value}; }}\n"
+            elif property_type == "height" and value.endswith("px"):
+                px_value = value.replace("px", "")
+                css += f".h__{px_value} {{ height: {value}; }}\n"
+            elif property_type == "padding" and value.endswith("px"):
+                px_value = value.replace("px", "")
+                css += f".p__{px_value} {{ padding: {value}; }}\n"
 
     # Final responsive overrides (placed after node-specific styles; no !important needed)
     css += (
@@ -3107,6 +3958,232 @@ def build_node_style_report(out_dir):
         print(f"[LOG] Node style report saved: {path}")
     except Exception as e:
         print(f"[WARN] Failed to write node style report: {e}")
+
+def build_alias_report(out_dir):
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        report = {
+            "mode": N_CLASS_ALIAS_MODE,
+            "source": N_CLASS_ALIAS_SOURCE,
+            "unique_only": N_CLASS_ALIAS_UNIQUE_ONLY,
+            "drop_n_unique": N_CLASS_ALIAS_DROP_N_UNIQUE,
+            "unique_count": sum(1 for a, c in ALIAS_FREQ.items() if c == 1),
+            "duplicates": {a: c for a, c in ALIAS_FREQ.items() if c > 1},
+            "map": NODE_ALIAS_CANDIDATE,
+        }
+        path = os.path.join(out_dir, 'alias_map.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"[LOG] Alias map saved: {path}")
+    except Exception as e:
+        print(f"[WARN] Failed to write alias map: {e}")
+
+def _css_defined_classes_from_file(path):
+    try:
+        if not os.path.exists(path):
+            return set()
+        txt = open(path, 'r', encoding='utf-8', errors='ignore').read()
+        import re
+        classes = set()
+        for m in re.finditer(r"\.[a-zA-Z0-9_-]+\s*\{", txt):
+            sel = m.group(0)
+            name = sel.split('{', 1)[0].strip()
+            name = name.lstrip('.')
+            classes.add(name)
+        return classes
+    except Exception:
+        return set()
+
+def _html_used_classes_from_file(path):
+    try:
+        if not os.path.exists(path):
+            return set()
+        txt = open(path, 'r', encoding='utf-8', errors='ignore').read()
+        import re
+        used = set()
+        for m in re.finditer(r'class="([^"]+)"', txt):
+            for c in m.group(1).split():
+                used.add(c.strip())
+        return used
+    except Exception:
+        return set()
+
+def _has_visible_fill(node):
+    try:
+        fills = (node.get('fills') or [])
+        for f in fills:
+            if not isinstance(f, dict):
+                continue
+            if f.get('visible') is False:
+                continue
+            t = f.get('type')
+            if t in ('SOLID', 'GRADIENT_LINEAR', 'GRADIENT_RADIAL', 'GRADIENT_ANGULAR', 'GRADIENT_DIAMOND', 'IMAGE'):
+                # opacity checks (best-effort)
+                if float(f.get('opacity', 1) or 1) <= 0:
+                    continue
+                color = f.get('color') or {}
+                if isinstance(color, dict) and float(color.get('a', 1) or 1) <= 0:
+                    continue
+                return True
+    except Exception:
+        pass
+    return False
+
+def _child_count(node):
+    try:
+        kids = node.get('children') or []
+        cnt = 0
+        for ch in kids:
+            if isinstance(ch, dict) and not should_exclude_node(ch):
+                cnt += 1
+        return cnt
+    except Exception:
+        return 0
+
+def build_waste_report(out_dir, sections, node_styles, combined_html=None, css_paths=None):
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        node_styles = node_styles or {}
+        shallow = []
+        zero_prop_n = []
+        used = set()
+        defined = set()
+        if combined_html:
+            used = _html_used_classes_from_file(combined_html)
+        css_paths = css_paths or []
+        for p in css_paths:
+            defined |= _css_defined_classes_from_file(p)
+
+        # zero-prop .n- classes (by generation data)
+        for node_id, props in node_styles.items():
+            if not props:
+                zero_prop_n.append(f"n-{css_safe_identifier(node_id)}")
+
+        # shallow wrappers (FRAME with one child and no signals)
+        def scan(node):
+            if not isinstance(node, dict):
+                return
+            if should_exclude_node(node):
+                return
+            t = (node.get('type') or '').upper()
+            kids = node.get('children') or []
+            if t in ('FRAME', 'GROUP') and kids:
+                cnt = _child_count(node)
+                if cnt == 1:
+                    # signals from figma node
+                    signals = []
+                    if _has_visible_fill(node):
+                        signals.append('fill')
+                    if (node.get('strokes') or []):
+                        signals.append('stroke')
+                    if (node.get('effects') or []):
+                        signals.append('effect')
+                    if node.get('cornerRadius') or node.get('rectangleCornerRadii'):
+                        signals.append('radius')
+                    if node.get('clipsContent'):
+                        signals.append('clip')
+                    for k in ('paddingLeft','paddingRight','paddingTop','paddingBottom'):
+                        try:
+                            if float(node.get(k) or 0) > 0:
+                                signals.append('padding')
+                                break
+                        except Exception:
+                            pass
+                    # signals from generated styles
+                    nid = node.get('id')
+                    safe = css_safe_identifier(nid) if nid else ''
+                    props = node_styles.get(nid) or []
+                    if props:
+                        for p in props:
+                            s = (p or '').strip().lower()
+                            if s.startswith(('display:','flex-','gap:','align-','justify-','background','border','box-shadow','filter','backdrop-filter','mix-blend-mode','overflow','aspect-ratio','transform')):
+                                signals.append('style')
+                                break
+                    if not signals:
+                        shallow.append({
+                            'id': nid,
+                            'safe': safe,
+                            'name': node.get('name'),
+                            'type': t,
+                            'reason': 'single-child-no-style',
+                        })
+            for ch in kids:
+                scan(ch)
+
+        for sec in (sections or []):
+            scan(sec)
+
+        # unused css/html classes
+        # remove some known globals from consideration
+        ignore = {'device-pc','device-sp','container','inner','content-width-container','full-width-container','bg-fullbleed','image-placeholder','rect-element','line','layout-item'}
+        defined_eff = {c for c in defined if c not in ignore}
+        used_eff = {c for c in used if c not in ignore}
+        unused_css = sorted(list(defined_eff - used_eff))
+        unused_html = sorted(list(used_eff - defined_eff))
+
+        report = {
+            'shallow_wrappers': shallow,
+            'zero_prop_n_classes': zero_prop_n,
+            'unused_css_classes': unused_css,
+            'unused_html_classes': unused_html,
+            'totals': {
+                'shallow_wrappers': len(shallow),
+                'zero_prop_n': len(zero_prop_n),
+                'unused_css': len(unused_css),
+                'unused_html': len(unused_html),
+            }
+        }
+        out = os.path.join(out_dir, 'waste_report.json')
+        with open(out, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"[LOG] Waste report saved: {out}")
+    except Exception as e:
+        print(f"[WARN] Failed to write waste report: {e}")
+
+def prune_unused_css(html_path: str, css_path: str, out_path: str):
+    try:
+        used = _html_used_classes_from_file(html_path)
+        if not os.path.exists(css_path):
+            return False
+        css = open(css_path, 'r', encoding='utf-8', errors='ignore').read()
+        import re
+        out_lines = []
+        i = 0
+        n = len(css)
+        # Very naive parser: drop simple top-level class rules whose all selectors are unused.
+        # Keep @-blocks and complex rules intact.
+        rule_re = re.compile(r"(^|\n)(\.[a-zA-Z0-9_-][^{]+)\{([^}]*)\}")
+        last = 0
+        removed = 0
+        for m in rule_re.finditer(css):
+            start, end = m.start(0), m.end(0)
+            # write chunk before
+            out_lines.append(css[last:start])
+            selectors = m.group(2).strip()
+            body = m.group(3)
+            # Check each selector separated by ,
+            sels = [s.strip() for s in selectors.split(',')]
+            # Only consider pure class selectors
+            def sel_used(s):
+                if not s.startswith('.'):
+                    return True  # keep non-class complex selectors
+                cname = s[1:].strip()
+                return cname in used
+            keep = any(sel_used(s) for s in sels)
+            if keep:
+                out_lines.append(m.group(0))
+            else:
+                removed += 1
+            last = end
+        out_lines.append(css[last:])
+        pruned = ''.join(out_lines)
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(pruned)
+        print(f"[LOG] CSS pruned: removed {removed} simple class rules -> {out_path}")
+        return True
+    except Exception as e:
+        print(f"[WARN] CSS prune failed: {e}")
+        return False
 
 # テキストスタイル収集用辞書
 collected_text_styles = {}
@@ -3243,7 +4320,11 @@ all_sections_html = ""
 for i, section_summary in enumerate(layout_structure["sections_summary"]):
     # 実際のセクションデータを取得（簡略版）
     section_data = sections[i] if i < len(sections) else {}
-    
+    # 現在のセクションインデックス（見出しポリシー用）
+    try:
+        CURRENT_SECTION_INDEX = i
+    except Exception:
+        CURRENT_SECTION_INDEX = i
     section_html = generate_html_for_section(section_data, layout_structure["wrapper_width"])
     all_sections_html += section_html + "\n"
     
@@ -3307,7 +4388,7 @@ if not SINGLE_HTML_ONLY:
     print(f"[LOG] Structure data saved: {structure_file}")
     print(f"[LOG] Index HTML file saved: {index_file}")
     print(f"[LOG] Index CSS file saved: {style_file}")
-print("[LOG] レイアウト解析とHTML生成が完了しました！")
+    print("[LOG] レイアウト解析とHTML生成が完了しました！")
 
 # 保存したPC情報を後で結合用に保持
 PC_SECTIONS = sections
@@ -3394,6 +4475,11 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
     # Write validation report
     try:
         build_node_style_report(combined_dir)
+        build_alias_report(combined_dir)
+        try:
+            build_waste_report(combined_dir, PC_SECTIONS, PC_NODE_STYLES, combined_html_file, [combined_css_file])
+        except Exception as e:
+            print(f"[WARN] Waste report (PC only) failed: {e}")
     except Exception as e:
         print(f"[WARN] Report generation failed: {e}")
  
@@ -3662,6 +4748,10 @@ if SP_FRAME_NODE_ID:
             pc_sections_html = ""
             for i, section_summary in enumerate(PC_LAYOUT_STRUCTURE["sections_summary"]):
                 section_data = PC_SECTIONS[i] if i < len(PC_SECTIONS) else {}
+                try:
+                    CURRENT_SECTION_INDEX = i
+                except Exception:
+                    CURRENT_SECTION_INDEX = i
                 pc_sections_html += generate_html_for_section(section_data, PC_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
 
             # SPセクションHTML生成（結合用）
@@ -3669,6 +4759,10 @@ if SP_FRAME_NODE_ID:
             sp_sections_html = ""
             for i, section_summary in enumerate(SP_LAYOUT_STRUCTURE["sections_summary"]):
                 section_data = SP_SECTIONS[i] if i < len(SP_SECTIONS) else {}
+                try:
+                    CURRENT_SECTION_INDEX = i
+                except Exception:
+                    CURRENT_SECTION_INDEX = i
                 sp_sections_html += generate_html_for_section(section_data, SP_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
 
             # 単一HTML
@@ -3763,6 +4857,17 @@ if SP_FRAME_NODE_ID:
         print(f"[LOG] Include-like candidates report saved: {report_file}")
     except Exception as e:
         print(f"[WARN] Failed to save include candidates: {e}")
+
+    # Reports
+    try:
+        build_node_style_report(combined_dir)
+        build_alias_report(combined_dir)
+        try:
+            build_waste_report(combined_dir, PC_SECTIONS, PC_NODE_STYLES, combined_html_file, [pc_css_file, sp_css_file])
+        except Exception as e:
+            print(f"[WARN] Waste report (PC+SP) failed: {e}")
+    except Exception as e:
+        print(f"[WARN] Report generation failed: {e}")
 
 # Final combined output guard: ensure index.html/style.css are produced even if SP missing
 if SINGLE_HTML:
@@ -3872,10 +4977,25 @@ if SINGLE_HTML:
         )
     with open(combined_css_file, "w", encoding="utf-8") as f:
         f.write(combined_css)
+    # Optional prune
+    if PRUNE_UNUSED_CSS:
+        try:
+            pruned_path = os.path.join(combined_dir, "style.css")
+            if prune_unused_css(combined_html_file, combined_css_file, pruned_path):
+                print(f"[LOG] Combined CSS pruned -> {pruned_path}")
+            else:
+                print("[LOG] CSS prune skipped or failed; keeping original")
+        except Exception as e:
+            print(f"[WARN] CSS prune error: {e}")
     print(f"[LOG] Combined HTML saved: {combined_html_file}")
     print(f"[LOG] Combined CSS saved: {combined_css_file}")
     # Write validation report
     try:
         build_node_style_report(combined_dir)
+        build_alias_report(combined_dir)
+        try:
+            build_waste_report(combined_dir, PC_SECTIONS, PC_NODE_STYLES, combined_html_file, [combined_css_file])
+        except Exception as e:
+            print(f"[WARN] Waste report (final combined) failed: {e}")
     except Exception as e:
         print(f"[WARN] Report generation failed: {e}")
