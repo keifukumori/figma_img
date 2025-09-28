@@ -3331,8 +3331,12 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             if not skip_h:
                 if SUPPRESS_FIXED_HEIGHT and USE_ASPECT_RATIO and width and height:
                     node_props.append(f"aspect-ratio: {int(width)}/{int(height)}")
+                    # 画像がフレックスコンテナ内で縮まないようにする
+                    node_props.append("flex-shrink: 0")
                 elif not SUPPRESS_FIXED_HEIGHT:
                     node_props.append(f"height: {int(height)}px")
+                    # 固定高さの場合もフレックスで縮まないようにする
+                    node_props.append("flex-shrink: 0")
             # Border radius / stroke for image wrapper
             sr = extract_stroke_and_radius_styles(element)
             if sr:
