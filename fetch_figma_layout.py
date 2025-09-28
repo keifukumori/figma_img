@@ -236,6 +236,83 @@ def generate_utility_class_name(property_type, value, direction=""):
     except Exception:
         return f"util__{property_type.replace('-', '_')}__{str(value).replace('-', '_')}"
 
+def detect_image_text_pattern(element):
+    """画像とテキストの配置パターンを検出"""
+    children = element.get("children", []) or []
+    if len(children) < 2:
+        return None
+
+    # 子要素を位置でソート（X座標順）
+    child_positions = []
+    for child in children:
+        if should_exclude_node(child):
+            continue
+        bounds = child.get("absoluteBoundingBox", {}) or {}
+        child_positions.append({
+            "element": child,
+            "x": bounds.get("x", 0),
+            "y": bounds.get("y", 0),
+            "width": bounds.get("width", 0),
+            "height": bounds.get("height", 0),
+            "type": child.get("type", ""),
+            "name": child.get("name", "")
+        })
+
+    if len(child_positions) < 2:
+        return None
+
+    # X座標でソート
+    child_positions.sort(key=lambda c: c["x"])
+
+    # 画像要素とテキスト要素を識別
+    def is_image_element(child_info):
+        element_type = child_info["type"]
+        name = child_info["name"].lower()
+        # 画像タイプ、またはrectangleで画像っぽい名前
+        return (element_type in ["RECTANGLE", "FRAME"] and
+                any(img_keyword in name for img_keyword in ["image", "img", "picture", "photo", "rectangle"]))
+
+    def is_text_container(child_info):
+        element_type = child_info["type"]
+        name = child_info["name"].lower()
+        # テキスト要素、またはFrameでテキストが含まれていそうな名前
+        if element_type == "TEXT":
+            return True
+        if element_type == "FRAME":
+            # フレーム内にテキストがあるかチェック
+            children = child_info["element"].get("children", [])
+            return any(c.get("type") == "TEXT" for c in children)
+        return False
+
+    # パターン検出
+    first_child = child_positions[0]
+    second_child = child_positions[1] if len(child_positions) > 1 else None
+
+    if not second_child:
+        return None
+
+    # 横並びかチェック（Y座標の重なり）
+    y_overlap_ratio = calculate_y_overlap(first_child, second_child)
+    if y_overlap_ratio < 0.5:  # 横並びではない
+        return None
+
+    # 画像 + テキストパターン
+    if is_image_element(first_child) and is_text_container(second_child):
+        return "image-text"
+    # テキスト + 画像パターン
+    elif is_text_container(first_child) and is_image_element(second_child):
+        return "text-image"
+
+    return None
+
+def calculate_y_overlap(child1, child2):
+    """2つの要素のY軸重なり率を計算"""
+    top = max(child1["y"], child2["y"])
+    bottom = min(child1["y"] + child1["height"], child2["y"] + child2["height"])
+    overlap = max(0, bottom - top)
+    min_height = min(child1["height"], child2["height"])
+    return overlap / max(1, min_height)
+
 def generate_utility_classes_for_element(element):
     """要素から適用可能なユーティリティクラスを生成"""
     utility_classes = []
@@ -244,9 +321,21 @@ def generate_utility_classes_for_element(element):
         # レイアウト情報の解析
         layout_info = analyze_layout_structure(element)
 
-        # Display - check for Auto Layout
+        # Display - check for Auto Layout and content patterns
         layout_mode = layout_info.get("layout_mode")
-        if layout_mode == "HORIZONTAL":
+
+        # Special handling for image-text patterns
+        content_pattern = detect_image_text_pattern(element)
+        if content_pattern in ["image-text", "text-image"]:
+            utility_classes.append("d-flex")
+            utility_classes.append("flex-row")
+            utility_classes.append("align-start")  # Align items to top
+            utility_classes.append("gap-40")  # Standard gap for image-text layouts
+            if content_pattern == "image-text":
+                utility_classes.append("image-text-layout")
+            else:
+                utility_classes.append("text-image-layout")
+        elif layout_mode == "HORIZONTAL":
             utility_classes.append("d-flex")
             utility_classes.append("flex-row")
         elif layout_mode == "VERTICAL":
@@ -2501,6 +2590,31 @@ def _intersection_area(a, b):
     iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
     return iw * ih
 
+def has_fixed_size_children(element):
+    """要素が固定サイズの子要素を持つかチェック"""
+    children = element.get("children", []) or []
+    for child in children:
+        if should_exclude_node(child):
+            continue
+
+        # 子要素のサイズ設定をチェック
+        sizing_h = (child.get("layoutSizingHorizontal") or "").upper()
+        bounds = child.get("absoluteBoundingBox", {})
+        width = bounds.get("width", 0)
+
+        # 固定幅を持つ子要素がある
+        if sizing_h == "FIXED" and width > 0:
+            return True
+
+        # 画像要素（通常固定サイズ）
+        child_type = child.get("type", "")
+        child_name = (child.get("name", "") or "").lower()
+        if (child_type in ["RECTANGLE", "FRAME"] and
+            any(keyword in child_name for keyword in ["image", "img", "picture", "photo", "rectangle"])):
+            return True
+
+    return False
+
 def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None):
     """Return (styles, skip_width, skip_height)
     - styles: list of CSS props like 'flex:1 1 auto', 'align-self:center'
@@ -2532,8 +2646,9 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     
     # Auto Layout内の要素は基本的に柔軟サイズ
     if parent_layout_mode == "HORIZONTAL":
-        # 押し広げ抑止（どの子にも付与）
-        styles.append("min-width:0")
+        # 押し広げ抑止（ただし、固定サイズ要素は除外）
+        if not (sizing_h == "FIXED" and cw > 0):
+            styles.append("min-width:0")
         if sizing_h == "FIXED" and cw > 0:
             # 固定幅: ベース・収縮不可
             styles.append(f"flex:0 0 {int(cw)}px")
@@ -2556,7 +2671,9 @@ def _child_auto_layout_rules(parent_layout_mode, child, parent_layout_info=None)
     elif parent_layout_mode == "VERTICAL":
         # 垂直レイアウト: 高さは柔軟、横は押し広げ抑止
         skip_h = True
-        styles.append("min-width:0")
+        # 固定幅要素以外にmin-width:0を適用
+        if not (sizing_h == "FIXED" and cw > 0):
+            styles.append("min-width:0")
         if layout_grow and float(layout_grow) > 0:
             styles.append(f"flex:{int(layout_grow)} 1 auto")
         else:
@@ -2673,9 +2790,10 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                         child_styles, skip_w, skip_h = _child_auto_layout_rules(layout_info.get("layout_mode"), vc[0], layout_info)
                         cid = vc[0].get("id")
                         if cid and child_styles:
-                            # ensure min-width:0 to avoid overflow
+                            # ensure min-width:0 to avoid overflow (ただし固定サイズ子要素を持つ場合は除外)
                             if not any(s.strip().lower().startswith('min-width:') for s in child_styles):
-                                child_styles.append('min-width:0')
+                                if not has_fixed_size_children(vc[0]):
+                                    child_styles.append('min-width:0')
                             add_node_styles(css_safe_identifier(cid), child_styles)
                     except Exception:
                         pass
@@ -2928,6 +3046,8 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             all_classes.append(layout_class)
         if node_class:
             all_classes.append(node_class)
+        # 固定幅クラス検出とfixed-widthクラス追加
+        all_classes = add_fixed_width_class_if_needed(all_classes)
         # 背景画像がある場合は、bg-fullbleedクラスを元要素には追加しない
         final_class = " ".join(all_classes)
 
@@ -3008,50 +3128,82 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             closing_html = f'{indent}</div>\n'
 
         # 2カラム: Auto Layout配分で子幅を割り当て（優先）
+        # 画像+テキストパターンの場合は統一的なflex配分を適用
+        content_pattern = detect_image_text_pattern(element)
+        is_image_text_layout = content_pattern in ["image-text", "text-image"]
+
         if USE_AL_RATIO_2COL and layout_info.get("type") == "two-column" and (element.get("layoutMode") or "").upper() == "HORIZONTAL":
             try:
                 direct_children = element.get("children", []) or []
                 dc = [c for c in direct_children if isinstance(c, dict)]
                 if len(dc) == 2:
-                    # Parent inner width = parent width - paddingL/R - gap
-                    b = element.get("absoluteBoundingBox") or {}
-                    pw = float(b.get("width") or 0)
-                    p_left = float(element.get("paddingLeft", 0) or 0)
-                    p_right = float(element.get("paddingRight", 0) or 0)
-                    gap = float(element.get("itemSpacing", 0) or 0)
-                    inner = max(0.0, pw - p_left - p_right - gap)
-                    # Child sizing
-                    fixed = []
-                    weights = []
-                    for ch in dc:
-                        cb = ch.get("absoluteBoundingBox") or {}
-                        cw = float(cb.get("width") or 0)
-                        sizing = (ch.get("layoutSizingHorizontal") or "").upper()
-                        grow = float(ch.get("layoutGrow") or 0)
-                        if sizing == "FIXED":
-                            fixed.append(cw)
-                            weights.append(0.0)
-                        elif sizing == "FILL":
-                            fixed.append(0.0)
-                            weights.append(grow if grow > 0 else 1.0)
-                        else:  # HUG or undefined → treat as fixed content width
-                            fixed.append(cw)
-                            weights.append(0.0)
-                    total_fixed = sum(fixed)
-                    rem = max(0.0, inner - total_fixed)
-                    total_w = sum(weights)
-                    widths = []
-                    for i in range(2):
-                        extra = (rem * (weights[i] / total_w)) if total_w > 0 else 0.0
-                        widths.append(fixed[i] + extra)
-                    if inner > 0 and (widths[0] > 0 or widths[1] > 0):
-                        p0 = max(0.0, min(100.0, (widths[0] / inner) * 100.0))
-                        p1 = max(0.0, min(100.0, 100.0 - p0))
-                        for child, percent in zip(dc, (p0, p1)):
-                            cid = child.get("id")
-                            if cid:
-                                safe = css_safe_identifier(cid)
-                                add_node_styles(safe, [f"flex: 0 0 {percent:.2f}%", "min-width:0"]) 
+                    # 画像+テキストパターンの場合は統一的な比率を適用
+                    if is_image_text_layout:
+                        # 画像部分に固定幅、テキスト部分にflex-grow
+                        for i, ch in enumerate(dc):
+                            ch_name = (ch.get("name") or "").lower()
+                            ch_type = ch.get("type") or ""
+
+                            # 画像要素の判定
+                            is_image = (ch_type in ["RECTANGLE", "FRAME"] and
+                                      any(keyword in ch_name for keyword in ["image", "img", "picture", "photo", "rectangle"]))
+
+                            if is_image:
+                                # 画像部分: 固定幅320px
+                                ch["_unified_flex"] = "flex: 0 0 320px; max-width: 320px;"
+                            else:
+                                # テキスト部分: 残り幅を占有
+                                ch["_unified_flex"] = "flex: 1 1 auto; min-width: 0;"
+
+                        # 画像+テキストパターンの場合は通常のAL比率計算をスキップ
+                        pass
+                    else:
+                        # 通常のAuto Layout比率計算
+                        # Parent inner width = parent width - paddingL/R - gap
+                        b = element.get("absoluteBoundingBox") or {}
+                        pw = float(b.get("width") or 0)
+                        p_left = float(element.get("paddingLeft", 0) or 0)
+                        p_right = float(element.get("paddingRight", 0) or 0)
+                        gap = float(element.get("itemSpacing", 0) or 0)
+                        inner = max(0.0, pw - p_left - p_right - gap)
+
+                        # Child sizing
+                        fixed = []
+                        weights = []
+                        for ch in dc:
+                            cb = ch.get("absoluteBoundingBox") or {}
+                            cw = float(cb.get("width") or 0)
+                            sizing = (ch.get("layoutSizingHorizontal") or "").upper()
+                            grow = float(ch.get("layoutGrow") or 0)
+                            if sizing == "FIXED":
+                                fixed.append(cw)
+                                weights.append(0.0)
+                            elif sizing == "FILL":
+                                fixed.append(0.0)
+                                weights.append(grow if grow > 0 else 1.0)
+                            else:  # HUG or undefined → treat as fixed content width
+                                fixed.append(cw)
+                                weights.append(0.0)
+                        total_fixed = sum(fixed)
+                        rem = max(0.0, inner - total_fixed)
+                        total_w = sum(weights)
+                        widths = []
+                        for i in range(2):
+                            extra = (rem * (weights[i] / total_w)) if total_w > 0 else 0.0
+                            widths.append(fixed[i] + extra)
+                        if inner > 0 and (widths[0] > 0 or widths[1] > 0):
+                            p0 = max(0.0, min(100.0, (widths[0] / inner) * 100.0))
+                            p1 = max(0.0, min(100.0, 100.0 - p0))
+                            for child, percent in zip(dc, (p0, p1)):
+                                cid = child.get("id")
+                                if cid:
+                                    safe = css_safe_identifier(cid)
+                                    # 画像+テキストパターンの統一flex設定があればそれを優先
+                                    if child.get("_unified_flex"):
+                                        flex_style = child["_unified_flex"]
+                                        add_node_styles(safe, [flex_style])
+                                    else:
+                                        add_node_styles(safe, [f"flex: 0 0 {percent:.2f}%", "min-width:0"]) 
             except Exception as e:
                 print(f"[WARN] 2col AL ratio mapping failed: {e}")
 
@@ -3162,10 +3314,11 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             # 固有サイズをCSSに委譲（Auto Layoutの意図を尊重）
             child_styles, skip_w, skip_h = _child_auto_layout_rules(parent_layout_mode, element, None)
             node_props = []
-            # 押し広げ抑止
-            node_props.append("min-width: 0")
             # Auto Layout HORIZONTAL: Sizingに応じて幅/フレックスを明示
             sizing_h = (element.get("layoutSizingHorizontal") or "").upper()
+            # 固定幅要素以外に押し広げ抑止を適用
+            if not (sizing_h == "FIXED" and width):
+                node_props.append("min-width: 0")
             if parent_layout_mode == "HORIZONTAL":
                 if sizing_h == "FIXED" and width:
                     node_props.append(f"flex: 0 0 {int(width)}px")
@@ -3227,6 +3380,8 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                             all_classes = [c for c in all_classes if not c.startswith('n-')]
                 except Exception:
                     pass
+                # 固定幅クラス検出とfixed-widthクラス追加
+                all_classes = add_fixed_width_class_if_needed(all_classes)
                 return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="height: auto; display: block;">\n{indent}</div>\n'
             else:
                 # 画像は使わず、サイズだけ確保
@@ -3243,6 +3398,8 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                             all_classes = [c for c in all_classes if not c.startswith('n-')]
                 except Exception:
                     pass
+                # 固定幅クラス検出とfixed-widthクラス追加
+                all_classes = add_fixed_width_class_if_needed(all_classes)
                 return f'{indent}<div class="{" ".join(all_classes)}"></div>\n'
         else:
             # 通常の矩形要素
@@ -3668,14 +3825,29 @@ img {{
 .layout-image-text {
     display: flex;
     align-items: flex-start;
-    gap: 20px;
+    gap: 40px;
 }
 
 .layout-text-image {
     display: flex;
     flex-direction: row-reverse;
     align-items: flex-start;
-    gap: 20px;
+    gap: 40px;
+}
+
+/* Image-text layout child constraints */
+.layout-image-text > .img,
+.layout-image-text > [class*="img"],
+.layout-text-image > .img,
+.layout-text-image > [class*="img"] {
+    flex: 0 0 320px;
+    max-width: 320px;
+}
+
+.layout-image-text > *:not(.img):not([class*="img"]),
+.layout-text-image > *:not(.img):not([class*="img"]) {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .layout-image-gallery {
@@ -3884,6 +4056,35 @@ img {{
 /* Box Shadow */
 .shadow { box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); }
 
+/* Image-Text Layout Patterns */
+.image-text-layout {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 20px;
+}
+
+.text-image-layout {
+    display: flex;
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    gap: 20px;
+}
+
+.image-text-layout > .img,
+.image-text-layout > [class*="img"],
+.image-text-layout > .rectangle {
+    flex-shrink: 0;
+    max-width: 40%;
+}
+
+.text-image-layout > .img,
+.text-image-layout > [class*="img"],
+.text-image-layout > .rectangle {
+    flex-shrink: 0;
+    max-width: 40%;
+}
+
 """
 
     # Dynamic width/height utilities from UTILITY_CLASS_CACHE
@@ -3912,7 +4113,102 @@ img {{
         "}\n"
     )
 
+    # Post-process: 画像+テキストレイアウトコンテナのmin-width:0を除去
+    css = fix_image_text_layout_sizing(css)
+
     return css
+
+def add_fixed_width_class_if_needed(classes):
+    """固定幅クラス(w__XXX)がある場合にfixed-widthクラスを追加"""
+    if any(cls.startswith('w__') for cls in classes):
+        if 'fixed-width' not in classes:
+            classes.append('fixed-width')
+    return classes
+
+def fix_image_text_layout_sizing(css):
+    """Auto Layoutの想定外挙動を起こすmin-width:0を除去し、固定幅要素のflex制御を追加"""
+    import re
+
+    lines = css.split('\n')
+    fixed_lines = []
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # CSSクラス定義の開始を検出（.で始まり{を含む行）
+        if line.strip().startswith('.') and '{' in line:
+            class_content = []
+            j = i
+            brace_count = 0
+
+            # クラス定義全体を取得
+            while j < len(lines):
+                class_content.append(lines[j])
+                brace_count += lines[j].count('{')
+                brace_count -= lines[j].count('}')
+                j += 1
+                if brace_count == 0:
+                    break
+
+            class_css = '\n'.join(class_content)
+
+            # 以下の場合にmin-width:0を除去:
+            # 1. flex-direction:row + gap を持つコンテナ
+            # 2. 固定幅(width: XXpx)を持つ要素
+            # 3. flex-direction:row コンテナ内の子要素（テキスト側含む）
+
+            has_row = 'flex-direction:row' in class_css
+            has_gap = ('gap:40px' in class_css or 'gap:20px' in class_css or 'gap:24px' in class_css)
+            has_fixed_width = re.search(r'width:\s*\d+(\.\d+)?px', class_css)
+            has_flex_column = 'flex-direction:column' in class_css
+
+            should_remove_min_width = (
+                (has_row and has_gap) or  # 横並びコンテナ
+                has_fixed_width or        # 固定幅要素
+                (has_flex_column and 'width:auto' in class_css)  # テキスト側縦並びコンテナ
+            )
+
+            if should_remove_min_width:
+                # min-width:0を除去
+                fixed_class_content = []
+                for content_line in class_content:
+                    if 'min-width:0;' in content_line:
+                        # min-width:0を除去
+                        fixed_line = content_line.replace('min-width:0;', '')
+                        # 空行にならないよう調整
+                        if fixed_line.strip() and fixed_line.strip() != ';':
+                            fixed_class_content.append(fixed_line)
+                        elif content_line.strip() != 'min-width:0;':
+                            # min-width:0以外の内容があれば追加
+                            fixed_class_content.append(fixed_line)
+                    else:
+                        fixed_class_content.append(content_line)
+
+                fixed_lines.extend(fixed_class_content)
+            else:
+                fixed_lines.extend(class_content)
+
+            i = j
+        else:
+            fixed_lines.append(line)
+            i += 1
+
+    # 固定幅要素のflex制御を追加
+    css_result = '\n'.join(fixed_lines)
+    css_result += '\n\n/* 固定幅要素のflex制御 (Auto Layout幅保持) */\n'
+    css_result += '.fixed-width {\n'
+    css_result += '    flex-shrink: 0;\n'
+    css_result += '}\n\n'
+    css_result += '/* SP: レスポンシブ性を優先 */\n'
+    css_result += '@media (max-width: 768px) {\n'
+    css_result += '    .fixed-width {\n'
+    css_result += '        flex-shrink: 1;\n'
+    css_result += '        max-width: 100%;\n'
+    css_result += '    }\n'
+    css_result += '}\n'
+
+    return css_result
 
 def build_node_style_report(out_dir):
     try:
