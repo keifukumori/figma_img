@@ -201,10 +201,14 @@ def write_style_common(root: Path, needed_utils):
     # Add responsive heuristics for SP under 768px (single DOM)
     sp: list[str] = []
     sp.append("@media (max-width: 768px) {")
-    # Columnize rows and collapse multi-column layouts
-    sp.append("  :where(.fx-row){flex-direction:column;}")
-    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col){display:flex;flex-direction:column;}")
-    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col) > *{flex:1 1 auto;min-width:0;width:100%;}")
+    # Columnize rows and collapse multi-column layouts (use !important to beat row rules in style.css)
+    sp.append("  :where(.fx-row){flex-direction:column !important;}")
+    sp.append("  :where(.fx-row) > *{width:100% !important; min-width:0 !important; flex:1 1 100% !important;}")
+    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col){display:flex;flex-direction:column !important;}")
+    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col) > *{flex:1 1 100% !important; min-width:0 !important; width:100% !important;}")
+    # Fallback for generated d-flex blocks without tokens (e.g., about__d-flex_283)
+    sp.append("  [class*='__d-flex_']{display:flex;flex-direction:column !important;}")
+    sp.append("  [class*='__d-flex_'] > *{width:100% !important; min-width:0 !important; flex:1 1 100% !important;}")
     # Shrink large gaps conservatively (~60%)
     for g in gaps:
         try:

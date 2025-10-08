@@ -1780,9 +1780,51 @@ def analyze_content_patterns(horizontal_groups):
     return patterns
 
 def generate_layout_class(layout_info):
-    """レイアウト情報からCSSクラス名を生成 (ユーティリティクラス優先のため無効化)"""
-    # ユーティリティクラス生成システムに移行したため、従来のlayout-*クラスは生成しない
-    return ""
+    """レイアウト情報からユーティリティクラス（fx/g/jc/ai）を生成して返す。
+
+    例:
+      - fx-row / fx-col
+      - g-24 （gap:24px）
+      - jc-flex-start / jc-center / jc-flex-end / jc-space-between / jc-space-around
+      - ai-flex-start / ai-center / ai-flex-end / ai-stretch
+    """
+    try:
+        classes = []
+        mode = (layout_info or {}).get("layout_mode")
+        if mode == "HORIZONTAL":
+            classes.append("fx-row")
+        elif mode == "VERTICAL":
+            classes.append("fx-col")
+
+        gap = (layout_info or {}).get("gap")
+        try:
+            if isinstance(gap, (int, float)) and gap > 0:
+                classes.append(f"g-{int(round(gap))}")
+        except Exception:
+            pass
+
+        def _map_align(v, prefix):
+            v = (v or "").strip().lower()
+            m = {
+                'flex-start': f'{prefix}-flex-start',
+                'center': f'{prefix}-center',
+                'flex-end': f'{prefix}-flex-end',
+                'space-between': f'{prefix}-space-between',
+                'space-around': f'{prefix}-space-around',
+                'stretch': f'{prefix}-stretch',
+            }
+            return m.get(v)
+
+        jc = _map_align((layout_info or {}).get("justify"), 'jc')
+        if jc:
+            classes.append(jc)
+        ai = _map_align((layout_info or {}).get("align"), 'ai')
+        if ai:
+            classes.append(ai)
+
+        return " ".join(classes)
+    except Exception:
+        return ""
 
 # ---------------- Phase 2: セクション詳細解析とHTML生成 ----------------
 print("[LOG] === Phase 2: セクション詳細解析開始 ===")
@@ -3126,7 +3168,8 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         # クラス結合（semantic + layout + node-specific）
         all_classes = [frame_class]
         if layout_class:
-            all_classes.append(layout_class)
+            # layout_class may contain multiple utility tokens separated by spaces
+            all_classes.extend([t for t in layout_class.split() if t])
         if node_class:
             all_classes.append(node_class)
         # 固定幅クラス検出とfixed-widthクラス追加
@@ -4808,18 +4851,19 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
         section_data = PC_SECTIONS[i] if i < len(PC_SECTIONS) else {}
         pc_sections_html += generate_html_for_section(section_data, PC_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
 
+    # PC-only single DOM (no device wrappers). style-common.css is injected by postprocess.
     combined_html = f'''<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{PC_LAYOUT_STRUCTURE["project_name"]}</title>
-    <link rel="stylesheet" href="style-pc.css" media="(min-width: 769px)">
+    <link rel="stylesheet" href="style-pc.css">
+    <link rel="stylesheet" href="style-common.css">
+    
 </head>
 <body>
-  <div class="device-pc">
 {pc_sections_html}
-  </div>
 </body>
 </html>'''
 
@@ -4831,30 +4875,16 @@ if SINGLE_HTML and not SP_FRAME_NODE_ID:
     # Build CSS with failsafe
     try:
         pc_css = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES)
-        # Core first, then clamp (so clamp wins over node-specific widths)
         combined_css = (
-            "/* Device visibility */\n"
-            ".device-pc { display: block; }\n"
-            ".device-sp { display: none; }\n\n"
-            "@media (max-width: 768px) {\n"
-            "  .device-pc { display: block; }\n"
-            "}\n\n"
             "/* Base image rule */\n"
             "img { max-width: 100%; height: auto; display: block; }\n\n"
-            "/* PC styles (core) */\n"
-            + pc_css +
-            "\n\n/* PC clamp to prevent overflow (overrides core) */\n"
-            ".device-pc, .device-pc * { box-sizing: border-box; }\n"
-            ".device-pc [class^=\"n-\"], .device-pc [class*=\" n-\"] { max-width: 100%; }\n"
-            ".device-pc img { max-width: 100%; height: auto; display: block; }\n\n"
-            + (".device-pc [class^=\\\"n-\\\"], .device-pc [class*=\\\" n-\\\"] { width: 100%; }\n\n" if PC_STRICT_CLAMP else "")
+            "/* PC styles (core) */\n" + pc_css + "\n"
         )
     except Exception as e:
         print(f"[WARN] CSS generation (PC-only) failed: {e}")
         combined_css = (
             "/* Fallback CSS */\n"
             "html, body { margin:0; padding:0; overflow-x:hidden; }\n"
-            ".device-pc { display:block; } .device-sp { display:none; }\n"
             "img { max-width:100%; height:auto; display:block; }\n"
         )
     with open(combined_css_file, "w", encoding="utf-8") as f:
@@ -5374,8 +5404,23 @@ if SINGLE_HTML:
             section_data = SP_SECTIONS[i] if i < len(SP_SECTIONS) else {}
             sp_sections_html += generate_html_for_section(section_data, SP_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
 
-    # Combined HTML
-    combined_html = f'''<!DOCTYPE html>
+    # Combined HTML (single DOM PC if DEVICE_MODE=pc or SP is absent)
+    if (DEVICE_MODE == 'pc') or (not have_sp):
+        combined_html = f'''<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{PC_LAYOUT_STRUCTURE["project_name"]}</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style-common.css">
+</head>
+<body>
+{pc_sections_html}
+</body>
+</html>'''
+    else:
+        combined_html = f'''<!DOCTYPE html>
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
