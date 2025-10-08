@@ -432,6 +432,13 @@ PC_SUFFIX = os.getenv("PC_SUFFIX", "-pc")
 SP_SUFFIX = os.getenv("SP_SUFFIX", "-sp")
 SINGLE_HTML = os.getenv("SINGLE_HTML", "true").lower() == "true"  # keep combined output
 SINGLE_HTML_ONLY = os.getenv("SINGLE_HTML_ONLY", "true").lower() == "true"  # skip per-frame files
+SINGLE_DOM = (os.getenv("SINGLE_DOM", "false") or "false").lower() == "true"  # PC DOM only, SP CSS under media query
+
+# Device mode control: pc | sp | both (default: both)
+# - pc: SP解析を明示的に無効化（.envにSP_*があっても無視）
+# - sp: PC解析を無効化（将来用途）
+# - both: 従来通りPC+SPを構築（SP_*が設定されている場合）
+DEVICE_MODE = (os.getenv("DEVICE_MODE", "both") or "both").lower()
 
 # Offline/Local input options
 # - INPUT_JSON_FILE: PC用のローカルJSONを指定するとAPIを叩かずに解析
@@ -443,6 +450,17 @@ SP_INPUT_JSON_FILE = os.getenv("SP_INPUT_JSON_FILE")
 OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() == "true"
 IMAGE_SOURCE = os.getenv("IMAGE_SOURCE", "auto").lower()
 USE_LOCAL_IMAGES_ONLY = OFFLINE_MODE or (IMAGE_SOURCE == "local")
+
+# Apply DEVICE_MODE overrides early
+if DEVICE_MODE == "pc":
+    # 明示的にSP生成をスキップ
+    SP_FRAME_NODE_ID = None
+    SP_INPUT_JSON_FILE = None
+    SP_FIGMA_URL = None
+elif DEVICE_MODE == "sp":
+    # 将来用途: PC生成をスキップ（PC依存箇所があるため通常は使用しない）
+    FRAME_NODE_ID = None
+    INPUT_JSON_FILE = None
 
 # Style scoping for node-specific (.n-*) rules
 # conservative: safest; block cascading color on non-text; allow essential layout/visuals
@@ -2852,6 +2870,71 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                         node_opacity = float(element.get("opacity", 1))
                         layers = []
                         base_color_css = None
+                        # 子要素に全画面グラデーションが乗っている場合は、そのレイヤーも取り込む（上位に重ねる）
+                        try:
+                            parent_bb = element.get("absoluteBoundingBox", {}) or {}
+                            pw = float(parent_bb.get("width", 0) or 0)
+                            ph = float(parent_bb.get("height", 0) or 0)
+                            overlay_layers = []
+                            for ch in (element.get("children") or []):
+                                if not isinstance(ch, dict):
+                                    continue
+                                ch_fills = ch.get("fills", []) or []
+                                if not ch_fills:
+                                    continue
+                                # 子の矩形が親の大半を覆う場合に限って取り込み
+                                bb = ch.get("absoluteBoundingBox", {}) or {}
+                                cw = float(bb.get("width", 0) or 0)
+                                ch_ = float(bb.get("height", 0) or 0)
+                                if pw <= 0 or ph <= 0 or cw <= 0 or ch_ <= 0:
+                                    continue
+                                cover_w = (cw / pw) >= 0.9
+                                cover_h = (ch_ / ph) >= 0.9
+                                if not (cover_w and cover_h):
+                                    continue
+                                for f in ch_fills:
+                                    if not isinstance(f, dict) or f.get("visible") is False:
+                                        continue
+                                    ftype = f.get("type") or ""
+                                    if not ftype.startswith("GRADIENT_"):
+                                        continue
+                                    # 子要素のグラデーションレイヤーをCSS化
+                                    stops = f.get("gradientStops", []) or []
+                                    if not stops:
+                                        continue
+                                    cols = []
+                                    for stop in stops:
+                                        pos = float(stop.get("position", 0)) * 100
+                                        c = stop.get("color", {}) or {}
+                                        rr = int(round(float(c.get("r", 0)) * 255))
+                                        gg = int(round(float(c.get("g", 0)) * 255))
+                                        bbv = int(round(float(c.get("b", 0)) * 255))
+                                        aa = float(c.get("a", 1)) * node_opacity
+                                        cols.append(f"rgba({rr}, {gg}, {bbv}, {aa:.2f}) {pos:.1f}%")
+                                    angle = 90
+                                    try:
+                                        hp = f.get("gradientHandlePositions", [])
+                                        if len(hp) >= 2:
+                                            dx = float(hp[1].get("x", 1)) - float(hp[0].get("x", 0))
+                                            dy = float(hp[1].get("y", 1)) - float(hp[0].get("y", 0))
+                                            import math
+                                            angle = (math.degrees(math.atan2(dy, dx)) + 90) % 360
+                                    except Exception:
+                                        pass
+                                    if ftype == "GRADIENT_LINEAR":
+                                        overlay_layers.append(f"linear-gradient({angle:.0f}deg, {', '.join(cols)})")
+                                    elif ftype == "GRADIENT_RADIAL":
+                                        overlay_layers.append(f"radial-gradient(circle, {', '.join(cols)})")
+                                    elif ftype == "GRADIENT_ANGULAR":
+                                        overlay_layers.append(f"conic-gradient(from {angle:.0f}deg, {', '.join(cols)})")
+                                    else:
+                                        overlay_layers.append(f"linear-gradient({angle:.0f}deg, {', '.join(cols)})")
+                            # CSSの背景は先に書いたものが最前面になるため、
+                            # 子要素由来のオーバーレイを先頭に積む
+                            if overlay_layers:
+                                layers.extend(overlay_layers)
+                        except Exception:
+                            pass
                         # top-most first for CSS background layering
                         for f in reversed(fills):
                             if not isinstance(f, dict) or f.get("visible") is False:
@@ -3598,16 +3681,16 @@ def generate_css(layout_structure, collected_text_styles, node_styles=None):
     width: 100%;
 }}
 
-/* Background fullbleed styles */
+/* Background fullbleed styles (viewport-centered, safe across nested containers) */
 .bg-fullbleed {{
     position: relative;
-    left: 50%;
-    transform: translateX(-50%);
     width: 100vw;
     max-width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
-    background-repeat: no-repeat;
 }}
 
 /* Base image rule */
@@ -3840,15 +3923,21 @@ img {{
 }
 
 /* Image-text layout child constraints */
-.layout-image-text > .img,
-.layout-image-text > [class*="img"],
-.layout-text-image > .img,
-.layout-text-image > [class*="img"] {
-    flex: 0 0 320px;
-    max-width: 320px;
-}
+    .layout-image-text > .img,
+    .layout-image-text > [class*="img"],
+    .layout-text-image > .img,
+    .layout-text-image > [class*="img"] {
+        flex: 0 0 clamp(240px, 30vw, 360px);
+        max-width: clamp(240px, 30vw, 360px);
+    }
 
-.layout-image-text > *:not(.img):not([class*="img"]),
+    /* Opt-out utility: let image column size naturally */
+    .img-basis-auto {
+        flex: 0 1 auto !important;
+        max-width: 100% !important;
+    }
+
+    .layout-image-text > *:not(.img):not([class*="img"]),
 .layout-text-image > *:not(.img):not([class*="img"]) {
     flex: 1 1 auto;
     min-width: 0;
@@ -5145,6 +5234,83 @@ if SP_FRAME_NODE_ID:
                 )
             with open(sp_css_file, "w", encoding="utf-8") as f:
                 f.write(sp_css_full)
+
+            # --- Optional Single DOM output (PC DOM only; SP CSS under media query) ---
+            if SINGLE_DOM:
+                try:
+                    single_dir = os.path.join(combined_dir, "single")
+                    os.makedirs(single_dir, exist_ok=True)
+
+                    # HTML: PC sections only
+                    single_html = f'''<!DOCTYPE html>\n<html lang="ja">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>{PC_LAYOUT_STRUCTURE["project_name"]}</title>\n    <link rel="stylesheet" href="style-common.css">\n    <link rel="stylesheet" href="style.css">\n</head>\n<body>\n{pc_sections_html}\n</body>\n</html>'''
+                    with open(os.path.join(single_dir, "index.html"), "w", encoding="utf-8") as f:
+                        f.write(single_html)
+
+                    # CSS: PC core + SP core inside media query + minimal overrides
+                    try:
+                        pc_css_core_sd = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
+                    except Exception as e:
+                        print(f"[WARN] SINGLE_DOM PC CSS generation failed: {e}")
+                        pc_css_core_sd = ""
+                    try:
+                        sp_css_core_sd = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
+                    except Exception as e:
+                        print(f"[WARN] SINGLE_DOM SP CSS generation failed: {e}")
+                        sp_css_core_sd = ""
+
+                    overrides = (
+                        "/* Equal-width helpers for multi-column layouts (desktop) */\n"
+                        "@media (min-width: 769px) {\n"
+                        "  .layout-2col > .layout-2col__col { flex: 1 1 0; min-width: 0; }\n"
+                        "  .layout-3col > * { flex: 1 1 0; min-width: 0; }\n"
+                        "}\n\n"
+                        "/* Fullbleed background centering override */\n"
+                        ".bg-fullbleed { left: auto !important; transform: none !important; margin-left: calc(50% - 50vw); margin-right: calc(50% - 50vw); width: 100vw; max-width: 100vw; }\n"
+                    )
+
+                    single_css = (
+                        "/* PC styles (core) */\n" + pc_css_core_sd +
+                        ("\n/* SP styles (as media query) */\n@media (max-width: 768px) {\n" + "\n".join([("  " + ln) for ln in sp_css_core_sd.splitlines()]) + "\n}\n" if sp_css_core_sd else "") +
+                        "\n" + overrides
+                    )
+                    with open(os.path.join(single_dir, "style.css"), "w", encoding="utf-8") as f:
+                        f.write(single_css)
+
+                    # Copy style-common.css if present
+                    try:
+                        common_css_path = os.path.join(combined_dir, "style-common.css")
+                        if os.path.exists(common_css_path):
+                            import shutil
+                            shutil.copy2(common_css_path, os.path.join(single_dir, "style-common.css"))
+                        else:
+                            minimal_common = (
+                                "/* Minimal common utilities (fallback) */\n"
+                                ":where(.fx-row){display:flex;flex-direction:row;}\n"
+                                ":where(.fx-col){display:flex;flex-direction:column;}\n"
+                                ":where(.bg-fullbleed){position:relative;width:100vw;max-width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw);background-repeat:no-repeat;background-size:cover;background-position:center;}\n"
+                            )
+                            with open(os.path.join(single_dir, "style-common.css"), "w", encoding="utf-8") as cf:
+                                cf.write(minimal_common)
+                    except Exception as e:
+                        print(f"[WARN] SINGLE_DOM common css copy/write failed: {e}")
+
+                    # Copy images directory
+                    try:
+                        import shutil
+                        src_images = os.path.join(combined_dir, "images")
+                        dst_images = os.path.join(single_dir, "images")
+                        if os.path.isdir(src_images):
+                            os.makedirs(dst_images, exist_ok=True)
+                            for name in os.listdir(src_images):
+                                s = os.path.join(src_images, name)
+                                d = os.path.join(dst_images, name)
+                                if os.path.isfile(s):
+                                    shutil.copy2(s, d)
+                    except Exception as e:
+                        print(f"[WARN] SINGLE_DOM images copy failed: {e}")
+                except Exception as e:
+                    print(f"[WARN] SINGLE_DOM output failed: {e}")
+
 
     print(f"[LOG] Combined HTML saved: {combined_html_file}")
     print(f"[LOG] Combined PC CSS saved: {pc_css_file}")

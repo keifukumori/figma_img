@@ -175,6 +175,8 @@ def write_style_common(root: Path, needed_utils):
         lines.append(f":where(.{fw}){{flex-wrap:{v};}}")
     # Overflow guard for images in two-column layouts (Windows subpixel/rounding differences)
     lines.append(":where(.layout-2col) img{max-width:100%;height:auto;display:block}")
+    # Equalize cards in row contexts (safe default)
+    lines.append(":where(.layout-2col, .layout-flex-row, .fx-row) > .card{flex:1 1 0;min-width:0}")
     # BEM-first: prefer role classes over positional
     lines.append(":where(.layout-2col__col--first) img{max-width:100%;width:auto;height:auto;display:block}")
     # Fallback for legacy role classes (to be removed later)
@@ -199,6 +201,22 @@ def write_style_common(root: Path, needed_utils):
     out = root / "style-common.css"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out
+
+
+# Tokens that our utilities know how to style even if they were not discovered from CSS props
+UTIL_TOKEN_RE = re.compile(r"\b(?:fx-(?:row|col)|g-\d+|ai-(?:flex-start|center|flex-end)|jc-(?:flex-start|center|flex-end|space-between)|fw-(?:nowrap|wrap))\b")
+
+
+def collect_util_tokens_from_html(root: Path) -> set[str]:
+    tokens: set[str] = set()
+    for html_path in find_html_files(root):
+        try:
+            text = html_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for m in UTIL_TOKEN_RE.finditer(text):
+            tokens.add(m.group(0))
+    return tokens
 
 
 def parse_css_class_props(css_path: Path, covered_props: set):
@@ -226,9 +244,10 @@ def inject_link_and_classes(html_path: Path, class_prop_map: dict, covered_props
     original = text
     # inject link in head if not present
     if "style-common.css" not in text:
+        # Insert link just after <head ...>, using a proper backreference (\1)
         text = re.sub(
             r"(<head[^>]*>)",
-            r"\\1\n    <link rel=\"stylesheet\" href=\"style-common.css\">",
+            r"\1\n    <link rel=\"stylesheet\" href=\"style-common.css\">",
             text,
             count=1,
             flags=re.I,
@@ -679,7 +698,10 @@ def main():
     if args.dry_run:
         return
 
-    if args.inject_css and needed_utils:
+    # Also include any utility tokens explicitly present in HTML classes
+    needed_utils.update(collect_util_tokens_from_html(root))
+
+    if args.inject_css:
         write_style_common(root, needed_utils)
         # build class->props map from style.css for augmentation
         css_class_map = parse_css_class_props(root / "style.css", set(FLEX_PROPS))

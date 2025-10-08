@@ -14,7 +14,7 @@
 pip install -r requirements.txt
 ```
 
-`.env` を用意（例は `docs/.env.example` 参照）。オンライン取得を行う場合は少なくとも `FIGMA_API_TOKEN` が必要です。
+`.env` を用意（例は `.env.example` 参照）。オンライン取得を行う場合は少なくとも `FIGMA_API_TOKEN` が必要です。
 
 ## 推奨ワークフロー（2段階）
 
@@ -79,12 +79,32 @@ OFFLINE_MODE=true IMAGE_SOURCE=local USE_IMAGES=true \
 python fetch_figma_layout.py
 ```
 
+PC のみ出力（SP を完全に無視）
+```bash
+# .env に以下を追加しておけば、SP 設定が存在しても無視されます
+# 例
+DEVICE_MODE=pc
+INPUT_JSON_FILE=figma_layout/raw_figma_data/latest_pc.json
+FRAME_NODE_ID=1:2
+SINGLE_HTML=true
+```
+これにより、`.device-sp` DOM を含まない PC 単独の出力になります。
+
+CLI から PC のみを指定する例
+```bash
+python figma_02_build_from_json.py \
+  --pc-json figma_layout/raw_figma_data/latest_pc.json \
+  --frame-id 1:2 \
+  --device-mode pc
+```
+
 ## 主な環境変数（抜粋）
 
 コア
 - `FIGMA_API_TOKEN` … Figma API トークン（取得時に必要）
 - `FILE_KEY` / `FRAME_NODE_ID` … 取得・生成対象（`INPUT_JSON_FILE` 利用時は `FRAME_NODE_ID` のみ必須）
 - `OUTPUT_DIR` … 出力ルート（既定: `figma_layout`）
+- `DEVICE_MODE` … `pc` | `sp` | `both`（既定: `both`）。`pc` でSP解析を強制無効化
 
 オフライン入力
 - `INPUT_JSON_FILE` / `SP_INPUT_JSON_FILE` … ローカル JSON 指定で API を回避
@@ -128,6 +148,7 @@ python fetch_figma_layout.py
 出力形態
 - `SINGLE_HTML` … index.html/style.css の結合出力を作成（既定: true）
 - `SINGLE_HTML_ONLY` … フレームごとの個別 HTML/CSS をスキップ（既定: true）
+- `SINGLE_DOM` … PC DOM のみを出力し、SPはCSSを `@media (max-width:768px)` で同梱（既定: false）
 
 その他（抜粋）
 - `SAVE_RAW_DATA` … 解析時に JSON を保存（`raw_figma_data/`）
