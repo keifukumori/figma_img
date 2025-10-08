@@ -198,8 +198,27 @@ def write_style_common(root: Path, needed_utils):
     lines.append('[data-bg-y="top"]{--bg-y:0%;}')
     lines.append('[data-bg-y="middle"]{--bg-y:50%;}')
     lines.append('[data-bg-y="bottom"]{--bg-y:100%;}')
+    # Add responsive heuristics for SP under 768px (single DOM)
+    sp: list[str] = []
+    sp.append("@media (max-width: 768px) {")
+    # Columnize rows and collapse multi-column layouts
+    sp.append("  :where(.fx-row){flex-direction:column;}")
+    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col){display:flex;flex-direction:column;}")
+    sp.append("  :where(.layout-2col, .layout-3col, .layout-4col) > *{flex:1 1 auto;min-width:0;width:100%;}")
+    # Shrink large gaps conservatively (~60%)
+    for g in gaps:
+        try:
+            n = int(g.split("-", 1)[1])
+            shrink = max(4, int(round(n * 0.6)))
+            sp.append(f"  :where(.{g}){{gap:{shrink}px}}")
+        except Exception:
+            continue
+    # Clamp horizontal padding of content container
+    sp.append("  .content-width-container{padding-left:clamp(12px,5vw,20px);padding-right:clamp(12px,5vw,20px);}")
+    sp.append("}")
+
     out = root / "style-common.css"
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    out.write_text("\n".join(lines + ["\n"] + sp) + "\n", encoding="utf-8")
     return out
 
 
