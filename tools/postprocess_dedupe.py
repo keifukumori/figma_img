@@ -209,6 +209,9 @@ def write_style_common(root: Path, needed_utils):
     # Fallback for generated d-flex blocks without tokens (e.g., about__d-flex_283)
     sp.append("  [class*='__d-flex_']{display:flex;flex-direction:column !important;}")
     sp.append("  [class*='__d-flex_'] > *{width:100% !important; min-width:0 !important; flex:1 1 100% !important;}")
+    # Ensure shadows are visible in collapsed rows: avoid clipping and keep side breathing room
+    sp.append("  :where(.fx-row, .about__d-flex){overflow:visible !important;}")
+    sp.append("  :where(.fx-row) > .card{margin-left:12px; margin-right:12px;}")
     # Shrink large gaps conservatively (~60%)
     for g in gaps:
         try:
