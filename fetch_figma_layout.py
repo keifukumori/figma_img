@@ -46,6 +46,28 @@ INCLUDE_KEYWORDS = [s.strip().lower() for s in os.getenv(
 INCLUDE_DENYLIST_IDS = {s.strip() for s in os.getenv("INCLUDE_DENYLIST_IDS", "").split(",") if s.strip()}
 INCLUDE_ALLOWLIST_IDS = {s.strip() for s in os.getenv("INCLUDE_ALLOWLIST_IDS", "").split(",") if s.strip()}
 
+# Text/alias output policies (typography token modes and alias tokenization)
+# - TEXT_TOKEN_MODE: off | role | section_local
+TEXT_TOKEN_MODE = (os.getenv("TEXT_TOKEN_MODE", "off") or "off").lower()
+TEXT_ROLE_MODE = (TEXT_TOKEN_MODE == 'role') or (os.getenv("TEXT_ROLE_MODE", "off").lower() in ("on", "true", "1"))
+# Section-local token config (used when TEXT_TOKEN_MODE=section_local)
+TEXT_LOCAL_BASE = os.getenv("TEXT_LOCAL_BASE", "text")
+TEXT_LOCAL_NOTE_BASE = os.getenv("TEXT_LOCAL_NOTE_BASE", "note")
+try:
+    TEXT_LOCAL_ENUM_WIDTH = int(os.getenv("TEXT_LOCAL_ENUM_WIDTH", "2") or 2)
+except Exception:
+    TEXT_LOCAL_ENUM_WIDTH = 2
+TEXT_LOCAL_INCLUDE_HN = (os.getenv("TEXT_LOCAL_INCLUDE_HN", "true").lower() == "true")
+
+# Control whether to emit figma-style classes into HTML and CSS
+FIGMA_STYLE_HTML = (os.getenv("FIGMA_STYLE_HTML", "true").lower() == "true")
+FIGMA_STYLE_CSS = (os.getenv("FIGMA_STYLE_CSS", "true").lower() == "true")
+# Joiner for tokens that compose alias base (e.g., use '_' to get about__men_s_tbc)
+N_CLASS_ALIAS_TOKEN_JOINER = os.getenv("N_CLASS_ALIAS_TOKEN_JOINER", "-")
+
+# n-* output policy: visual-only for non-text nodes
+N_NODE_VISUAL_ONLY = (os.getenv("N_NODE_VISUAL_ONLY", "true").lower() == "true")
+
 # Reuse maps built from whole file
 REUSE_COMPONENT_COUNT = {}
 
@@ -496,7 +518,7 @@ N_CLASS_ALIAS_MODE = (os.getenv("N_CLASS_ALIAS_MODE", "off") or "off").lower()
 N_CLASS_ALIAS_SOURCE = (os.getenv("N_CLASS_ALIAS_SOURCE", "semantic") or "semantic").lower()  # semantic|safe-name
 N_CLASS_ALIAS_NAMESPACE = (os.getenv("N_CLASS_ALIAS_NAMESPACE", "section") or "section").lower()  # none|section
 N_CLASS_ALIAS_STYLE = (os.getenv("N_CLASS_ALIAS_STYLE", "bem") or "bem").lower()  # bem|flat
-N_CLASS_ALIAS_DEDUP = (os.getenv("N_CLASS_ALIAS_DEDUP", "section_index") or "section_index").lower()  # none|section_index
+N_CLASS_ALIAS_DEDUP = (os.getenv("N_CLASS_ALIAS_DEDUP", "none") or "none").lower()  # none|section_index
 N_CLASS_ALIAS_UNIQUE_ONLY = (os.getenv("N_CLASS_ALIAS_UNIQUE_ONLY", "true").lower() == "true")
 N_CLASS_ALIAS_DROP_N_UNIQUE = (os.getenv("N_CLASS_ALIAS_DROP_N_UNIQUE", "false").lower() == "true")
 N_CLASS_ALIAS_TOKEN_FILTER = (os.getenv("N_CLASS_ALIAS_TOKEN_FILTER", "none") or "none").lower()  # none|aggressive
@@ -631,10 +653,21 @@ def _is_bad_alias(name: str) -> bool:
     if not n:
         return True
     # Avoid generic/structural or reserved prefixes
-    if n in {"section", "container", "inner", "content-width-container", "bg-fullbleed", "image-placeholder", "content-item", "layout-item"}:
+    if n in {"section", "container", "inner", "content-width-container", "bg-fullbleed", "image-placeholder", "content-item", "layout-item", "block", "item"}:
         return True
     if n.startswith("n-") or n.startswith("layout-") or n.startswith("device-"):
         return True
+    # Avoid utility-like tokens as aliases (these should stay as utilities, not BEM aliases)
+    if n in {"d-flex", "d-block", "d-inline", "d-inline-block", "d-grid", "d-none", "flex-row", "flex-col"}:
+        return True
+    util_prefixes = (
+        "justify-", "align-", "gap__", "g-", "ai-", "jc-", "fw-",
+        "w__", "h__", "min-w__", "max-w__", "min-h__", "max-h__",
+        "text__", "bg__", "rounded__", "pos-", "z__", "overflow-",
+    )
+    for p in util_prefixes:
+        if n.startswith(p):
+            return True
     return False
 
 
@@ -644,79 +677,71 @@ def maybe_register_alias(node_id: str, element_name: str, element_type: str = ""
     if not node_id:
         return
     try:
-        cand = None
+        # Always prefer semantic/safe-name generation for aliases
+        if N_CLASS_ALIAS_SOURCE == "semantic":
+            cand = generate_semantic_class(element_name or "", element_type or "")
+        else:
+            raw = (element_name or "").strip()
+            cand = css_safe_identifier(raw.lower())
 
-        # Try utility class generation if element is provided
-        if element is not None:
-            utility_classes = generate_utility_classes_for_element(element)
-            if utility_classes:
-                # Use the first utility class as the alias
-                cand = utility_classes[0]
-
-        # Fallback to semantic/safe-name generation
-        if not cand:
-            if N_CLASS_ALIAS_SOURCE == "semantic":
-                cand = generate_semantic_class(element_name or "", element_type or "")
-            else:
-                # safe-name source
-                raw = (element_name or "").strip()
-                cand = css_safe_identifier(raw.lower())
-
+        # Abort if not usable or looks like a utility token
         if not cand or _is_bad_alias(cand):
             return
 
-        # If we have a utility class, use it directly without modification
-        if element is not None and cand in UTILITY_CLASS_CACHE.values():
-            chosen = cand
-        else:
-            # Namespace with section (optional)
-            # Token filter (aggressive): drop numeric/noise tokens
-            alias_base = cand
-            try:
-                if N_CLASS_ALIAS_TOKEN_FILTER == 'aggressive':
-                    import re
-                    tokens = re.split(r"[^a-zA-Z0-9]+", cand)
-                    filtered = []
-                    for t in tokens:
-                        if not t:
-                            continue
-                        letters = sum(ch.isalpha() for ch in t)
-                        digits = sum(ch.isdigit() for ch in t)
-                        if letters == 0 and digits > 0:
-                            continue  # pure number
-                        if letters < digits:
-                            continue  # mostly numeric
-                        if len(t) <= 1:
-                            continue
-                        filtered.append(t.lower())
-                    if filtered:
-                        alias_base = "-".join(filtered)
-                    else:
-                        alias_base = 'item'
-            except Exception:
-                pass
-            # Stopwords (generic tokens)
-            try:
-                stop = {"frame","group","rectangle","rect","line","vector","image","img","layer","box","container","inner","section"}
-                if alias_base in stop:
-                    alias_base = 'block' if (element_type or '').upper() in ('FRAME','GROUP') else 'item'
-            except Exception:
-                pass
+        # Namespace with section (optional) and token filtering
+        alias_base = cand
+        try:
+            if N_CLASS_ALIAS_TOKEN_FILTER == 'aggressive':
+                import re
+                tokens = re.split(r"[^a-zA-Z0-9]+", cand)
+                filtered = []
+                for t in tokens:
+                    if not t:
+                        continue
+                    letters = sum(ch.isalpha() for ch in t)
+                    digits = sum(ch.isdigit() for ch in t)
+                    if letters == 0 and digits > 0:
+                        continue  # pure number
+                    if letters < digits:
+                        continue  # mostly numeric
+                    if len(t) <= 1:
+                        continue
+                    filtered.append(t.lower())
+                if filtered:
+                    joiner = N_CLASS_ALIAS_TOKEN_JOINER if N_CLASS_ALIAS_TOKEN_JOINER in ("-","_") else "-"
+                    alias_base = joiner.join(filtered)
+                else:
+                    alias_base = 'item'
+        except Exception:
+            pass
+        # Stopwords (generic tokens)
+        try:
+            stop = {"frame","group","rectangle","rect","line","vector","image","img","layer","box","container","inner","section"}
+            if alias_base in stop:
+                alias_base = 'block' if (element_type or '').upper() in ('FRAME','GROUP') else 'item'
+        except Exception:
+            pass
 
-            # Set chosen based on alias_base
-            chosen = alias_base
-            if N_CLASS_ALIAS_NAMESPACE == 'section' and CURRENT_SECTION_KEY:
-                if N_CLASS_ALIAS_STYLE == 'bem':
-                    alias_base = f"{CURRENT_SECTION_KEY}__{alias_base}"
-                else:
-                    alias_base = f"{CURRENT_SECTION_KEY}_{alias_base}"
-                # Deduplicate within section by adding _2, _3 ...
-                base_count = ALIAS_BASE_FREQ.get(alias_base, 0)
-                if N_CLASS_ALIAS_DEDUP == 'section_index' and base_count > 0:
-                    chosen = f"{alias_base}_{base_count+1}"
-                else:
-                    chosen = alias_base
-                ALIAS_BASE_FREQ[alias_base] = base_count + 1
+        # If alias_base is still too generic or utility-like, skip aliasing entirely
+        try:
+            if _is_bad_alias(alias_base):
+                return
+        except Exception:
+            pass
+        # Set chosen based on alias_base
+        chosen = alias_base
+        if N_CLASS_ALIAS_NAMESPACE == 'section' and CURRENT_SECTION_KEY:
+            if N_CLASS_ALIAS_STYLE == 'bem':
+                alias_base = f"{CURRENT_SECTION_KEY}__{alias_base}"
+            else:
+                alias_base = f"{CURRENT_SECTION_KEY}_{alias_base}"
+            # Deduplicate within section by adding _2, _3 ... (configurable)
+            base_count = ALIAS_BASE_FREQ.get(alias_base, 0)
+            if N_CLASS_ALIAS_DEDUP == 'section_index' and base_count > 0:
+                chosen = f"{alias_base}_{base_count+1}"
+            else:
+                chosen = alias_base
+            ALIAS_BASE_FREQ[alias_base] = base_count + 1
 
         # Assign to node
         safe_id = css_safe_identifier(node_id)
@@ -2485,8 +2510,9 @@ def generate_html_for_section(section_data, wrapper_width):
         indent_children = "    "
         closing = "  </div>\n</section>\n"
     else:
-        # 従来の構造（後方互換）
-        html = f'''<section class="{section_class}">\n  <div class="container" style="max-width: {wrapper_width}px; margin: 0 auto;">\n    <div class="inner">\n'''
+        # 従来の構造（後方互換、インライン禁止）
+        # wrapper_width は無視し、共通の content-width-container で幅制限
+        html = f'''<section class="{section_class}">\n  <div class="container content-width-container">\n    <div class="inner">\n'''
         indent_children = "      "
         closing = "    </div>\n  </div>\n</section>\n"
     
@@ -2773,31 +2799,79 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         # フォント情報の取得（Figmaスタイル優先）
         style_info = extract_text_styles(element, layout_structure.get("figma_styles"))
         element_id = element.get("id", "")
-        base_class = generate_text_class(style_info, element_name, element_id)
-        classes = [base_class]
-        # Figmaのテキストスタイル名がある場合、figma-style クラスも付与
-        if style_info.get("figma_style_name"):
+        classes = []
+
+        # 見出しレベルの判定
+        tag_name = detect_heading_level(element)
+
+        # セクションローカル・トークン
+        if TEXT_TOKEN_MODE == 'section_local':
+            section_key = CURRENT_SECTION_KEY or 'section'
+            if tag_name and tag_name.startswith('h'):
+                # heading tokens
+                hd = f"{section_key}__heading"
+                classes.append(hd)
+                TEXT_LOCAL_STYLES.setdefault(hd, style_info)
+                if TEXT_LOCAL_INCLUDE_HN:
+                    hn = f"{section_key}__{tag_name}"
+                    classes.append(hn)
+                    TEXT_LOCAL_STYLES.setdefault(hn, style_info)
+            else:
+                # text/note tokens with enumeration
+                try:
+                    fs = int(style_info.get("font_size") or 0)
+                except Exception:
+                    fs = 0
+                fw = int(style_info.get("font_weight") or 0)
+                kind = 'note' if (fs <= 12 and fw <= 500) else 'text'
+                base = TEXT_LOCAL_NOTE_BASE if kind == 'note' else TEXT_LOCAL_BASE
+                ct = TEXT_LOCAL_COUNTERS.setdefault(section_key, {'text': 0, 'note': 0})
+                ct[kind] = int(ct.get(kind, 0) or 0) + 1
+                idx = ct[kind]
+                idx_str = str(idx).zfill(TEXT_LOCAL_ENUM_WIDTH)
+                cls = f"{section_key}__{base}_{idx_str}"
+                classes.append(cls)
+                TEXT_LOCAL_STYLES.setdefault(cls, style_info)
+
+        # 役割ベース（t-*) のクラス付与（オプション）
+        elif TEXT_ROLE_MODE:
+            role_cls = None
+            if tag_name and tag_name.startswith('h'):
+                role_cls = f"t-heading--{tag_name}"
+            else:
+                # body vs note 簡易判定（小さめサイズをノート扱い）
+                try:
+                    fs = int(style_info.get("font_size") or 0)
+                except Exception:
+                    fs = 0
+                fw = int(style_info.get("font_weight") or 0)
+                if fs <= 12 and fw <= 500:
+                    role_cls = "t-note"
+                else:
+                    role_cls = "t-body"
+            if role_cls:
+                classes.append(role_cls)
+                # 登録（CSS生成用に保持）
+                try:
+                    ROLE_TEXT_STYLES.setdefault(role_cls, style_info)
+                except Exception:
+                    pass
+        else:
+            # 従来の text-size-* / semantic を使用
+            base_class = generate_text_class(style_info, element_name, element_id)
+            if base_class:
+                classes.append(base_class)
+
+        # Figmaのテキストスタイル名がある場合、figma-style クラスも付与（許可時のみ）
+        if style_info.get("figma_style_name") and FIGMA_STYLE_HTML:
             figma_class = style_info["figma_style_name"].lower().replace(" ", "-").replace("/", "-")
             classes.append(f"figma-style-{figma_class}")
         style_class = " ".join(dict.fromkeys(classes))
 
-        # テキスト要素のinline style生成（エフェクトのみ、背景色は適用しない）
-        text_style_parts = []
-
+        # テキスト要素の見た目はノードCSSへ（インライン禁止）
         # Note: テキストのfillsは文字色として使用（extract_text_stylesで処理済み）
         # 背景色はテキスト要素には適用しない（Figmaの仕様に合わせる）
-
-        # Effects（シャドウ、ブラー）の適用
         effects_style = extract_effects_styles(element)
-        if effects_style:
-            text_style_parts.append(effects_style)
-
-        # inline styleの生成
-        inline_style = "; ".join(text_style_parts) if text_style_parts else ""
-        style_attr = f' style="{inline_style}"' if inline_style else ""
-
-        # 見出しレベルの判定
-        tag_name = detect_heading_level(element)
 
         # ノード固有の色をCSSに出力し、テキスト要素にもノードクラスを付与（Figmaスタイル色の誤適用回避）
         node_id = element.get("id")
@@ -2809,13 +2883,16 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
             color = style_info.get("color")
             if color:
                 add_node_styles(node_safe, [f"color: {color}"])
+            # set text effects via CSS (no inline)
+            if effects_style:
+                add_node_styles(node_safe, [effects_style])
         if node_class:
             # optionally drop .n- if unique alias present
             if not _should_drop_n_for_safe(node_safe):
                 style_class = f"{style_class} {node_class}"
-        # optional alias class
+        # optional alias class（セクションローカル・テキストモード時は追加しない）
         try:
-            if N_CLASS_ALIAS_MODE == 'add' and node_safe:
+            if N_CLASS_ALIAS_MODE == 'add' and node_safe and not (TEXT_TOKEN_MODE == 'section_local'):
                 alias = NODE_ALIAS_CANDIDATE.get(node_safe)
                 if alias and (f" {alias}" not in style_class):
                     style_class = f"{style_class} {alias}"
@@ -2833,7 +2910,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                 maybe_register_alias(node_id, fallback_name, "TEXT", element)
         except Exception:
             pass
-        return f'{indent}<{tag_name} class="{style_class}"{style_attr}>{text_content}</{tag_name}>\n'
+        return f'{indent}<{tag_name} class="{style_class}">{text_content}</{tag_name}>\n'
     
     # コンテナ（子を持つ要素）は常にコンテナとして扱う（画像fillがあっても背景として扱う）
     children = element.get("children", []) or element.get("elements", []) or []
@@ -3143,7 +3220,11 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         # Stroke / corner radius
         sr = extract_stroke_and_radius_styles(element)
         if sr:
-            style_parts.append(sr)
+            # Avoid duplicating border-radius: we generate rounded__* utilities separately
+            parts = [p.strip() for p in sr.split(';') if p.strip()]
+            parts = [p for p in parts if not p.startswith('border-radius')]
+            if parts:
+                style_parts.append('; '.join(parts))
         # Blend mode
         bm = extract_blend_mode_style(element)
         if bm:
@@ -3154,52 +3235,92 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         if effects_style:
             style_parts.append(effects_style)
 
-        # クリップ有効時は隠す
+        # クリップ有効時はユーティリティ .clip を付与（CSSは共通側で提供）
+        add_clip_util = False
         if element.get("clipsContent"):
-            style_parts.append("overflow:hidden")
+            add_clip_util = True
         # ノード固有クラスへスタイルを移譲
         node_id = element.get("id", "")
         node_safe = css_safe_identifier(node_id) if node_id else None
         node_class = f"n-{node_safe}" if node_safe else None
+        has_node_style = False
         if node_class and style_parts:
             set_node_kind(node_id, 'container')
             add_node_styles(node_safe, [p for p in style_parts if p])
+            has_node_style = True
 
         # クラス結合（semantic + layout + node-specific）
         all_classes = [frame_class]
         if layout_class:
             # layout_class may contain multiple utility tokens separated by spaces
             all_classes.extend([t for t in layout_class.split() if t])
-        if node_class:
+        if node_class and has_node_style:
             all_classes.append(node_class)
         # 固定幅クラス検出とfixed-widthクラス追加
         all_classes = add_fixed_width_class_if_needed(all_classes)
+        # 追加: クラスの重複を順序維持で除去（fx-col が二重などを防止）
+        deduped = []
+        seen = set()
+        for c in all_classes:
+            if not c:
+                continue
+            if c in seen:
+                continue
+            seen.add(c)
+            deduped.append(c)
+        all_classes = deduped
         # 背景画像がある場合は、bg-fullbleedクラスを元要素には追加しない
         final_class = " ".join(all_classes)
+        # クリップユーティリティを付与
+        if 'add_clip_util' in locals() and add_clip_util:
+            if 'clip' not in final_class.split():
+                final_class = (final_class + ' clip').strip()
 
         # 背景画像がある場合は親要素（wrapper）を追加（ポリシー: content|none）
         if has_image_fill and USE_IMAGES and background_wrapper_style:
-            # Ensure single image covers full width without tiling
+            # Ensure single image covers full width without tiling (move to CSS class)
+            css_wrapper_props: list[str] = []
             try:
-                background_wrapper_style.append('background-repeat:no-repeat')
-                background_wrapper_style.append('background-size:cover')
-                background_wrapper_style.append('background-position:center')
+                css_wrapper_props.append('background-repeat:no-repeat')
+                css_wrapper_props.append('background-size:cover')
+                css_wrapper_props.append('background-position:center')
             except Exception:
                 pass
             # Apply border-radius to wrapper if element has it
             try:
                 sr = extract_stroke_and_radius_styles(element) or ''
                 if 'border-radius' in sr:
-                    # extract just border-radius value
                     for part in sr.split(';'):
                         part = part.strip()
                         if part.startswith('border-radius'):
-                            background_wrapper_style.append(part)
-                            background_wrapper_style.append('overflow:hidden')
+                            css_wrapper_props.append(part)
+                            css_wrapper_props.append('overflow:hidden')
             except Exception:
                 pass
-            wrapper_style = "; ".join(background_wrapper_style)
-            html = f'{indent}<div class="bg-fullbleed" style="{wrapper_style}">\n'
+            # Move background wrappers props collected earlier into CSS class, and assign class to wrapper
+            try:
+                wrapper_safe = css_safe_identifier(node_id) if node_id else None
+                if wrapper_safe:
+                    # Transfer inline list into CSS props
+                    for p in background_wrapper_style:
+                        if p and p not in css_wrapper_props:
+                            css_wrapper_props.append(p)
+                    # Register custom class for wrapper backgrounds
+                    global CUSTOM_CLASS_STYLES
+                    CUSTOM_CLASS_STYLES.setdefault(f'nbg-{wrapper_safe}', [])
+                    # de-duplicate by prop name
+                    existing = CUSTOM_CLASS_STYLES[f'nbg-{wrapper_safe}']
+                    prop_map = {prop.split(':',1)[0].strip().lower(): prop for prop in existing if ':' in prop}
+                    for prop in css_wrapper_props:
+                        if ':' in prop:
+                            key = prop.split(':',1)[0].strip().lower()
+                            prop_map[key] = prop
+                    CUSTOM_CLASS_STYLES[f'nbg-{wrapper_safe}'] = list(prop_map.values())
+                    html = f'{indent}<div class="bg-fullbleed nbg-{wrapper_safe}">\n'
+                else:
+                    html = f'{indent}<div class="bg-fullbleed">\n'
+            except Exception:
+                html = f'{indent}<div class="bg-fullbleed">\n'
             if BG_FULLBLEED_INNER == "content":
                 html += f'{indent}  <div class="content-width-container">\n'
                 # optional alias class for containers inside wrapper
@@ -3275,8 +3396,14 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                                       any(keyword in ch_name for keyword in ["image", "img", "picture", "photo", "rectangle"]))
 
                             if is_image:
-                                # 画像部分: 固定幅320px
-                                ch["_unified_flex"] = "flex: 0 0 320px; max-width: 320px;"
+                                # 画像部分: 子のABB幅を尊重
+                                cbb = ch.get("absoluteBoundingBox") or {}
+                                cw = float(cbb.get("width") or 0)
+                                try:
+                                    wpx = int(round(cw)) if cw > 0 else 320
+                                except Exception:
+                                    wpx = 320
+                                ch["_unified_flex"] = f"flex: 0 0 {wpx}px; max-width: {wpx}px;"
                             else:
                                 # テキスト部分: 残り幅を占有
                                 ch["_unified_flex"] = "flex: 1 1 auto; min-width: 0;"
@@ -3512,7 +3639,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                     pass
                 # 固定幅クラス検出とfixed-widthクラス追加
                 all_classes = add_fixed_width_class_if_needed(all_classes)
-                return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}" style="height: auto; display: block;">\n{indent}</div>\n'
+                return f'{indent}<div class="{" ".join(all_classes)}">\n{indent}  <img src="{src}" alt="{escape(element_name)}">\n{indent}</div>\n'
             else:
                 # 画像は使わず、サイズだけ確保
                 all_classes = [img_class]
@@ -3670,8 +3797,16 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                 img_class = semantic_class if semantic_class else "image-placeholder"
             else:
                 img_class = "image-placeholder"
+            # Apply width/height via node-specific CSS (no inline)
+            node_id = element.get("id", "")
+            node_safe = css_safe_identifier(node_id) if node_id else None
+            node_class = f"n-{node_safe}" if node_safe else None
+            if node_safe:
+                set_node_kind(node_id, 'image')
+                add_node_styles(node_safe, [f"width: {int(width)}px", f"height: {int(height)}px"])
             safe_name = element_name.replace(" ", "_").replace("(", "").replace(")", "")
-            return f'{indent}<div class="{img_class}" style="width: {width}px; height: {height}px;">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" style="width: 100%; height: 100%; object-fit: cover;">\n{indent}</div>\n'
+            cls = f"{img_class} {node_class}" if node_class else img_class
+            return f'{indent}<div class="{cls}">\n{indent}  <img src="https://via.placeholder.com/{int(width)}x{int(height)}/cccccc/666666?text={safe_name}" alt="{element_name}" class="img-cover">\n{indent}</div>\n'
         else:
             # その他の要素
             if SEMANTIC_CLASS_MODE == "all":
@@ -3795,13 +3930,11 @@ img {{
 
 '''
     
-    css += '''/* Figma Text Styles */
-'''
-    # 収集済みテキストスタイルから、Figmaスタイル名由来のクラスを優先生成
-    for class_name, style_info in collected_text_styles.items():
-        if not class_name.startswith("figma-style-"):
-            continue
-        css += f'''.{class_name} {{
+    # 役割ベースのテキストスタイル（t-*）の出力（有効時）
+    if TEXT_ROLE_MODE and ROLE_TEXT_STYLES:
+        css += "/* Role-based Text Styles */\n"
+        for role_class, style_info in ROLE_TEXT_STYLES.items():
+            css += f'''.{role_class} {{
     font-family: {style_info["font_family"]};
     font-size: {style_info["font_size"]}px;
     font-weight: {style_info["font_weight"]};
@@ -3809,17 +3942,68 @@ img {{
     letter-spacing: {style_info["letter_spacing"]}px;
     text-align: {style_info["text_align"]};
 '''
-        if style_info.get("text_decoration"):
-            css += f"    text-decoration: {style_info['text_decoration']};\n"
-        if style_info.get("text_transform"):
-            css += f"    text-transform: {style_info['text_transform']};\n"
-        if style_info.get("font_style"):
-            css += f"    font-style: {style_info['font_style']};\n"
-        if style_info.get("paragraph_spacing") is not None:
-            css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
-        else:
-            css += "    margin: 10px 0;\n"
-        css += "}\n\n\n"
+            if style_info.get("text_decoration"):
+                css += f"    text-decoration: {style_info['text_decoration']};\n"
+            if style_info.get("text_transform"):
+                css += f"    text-transform: {style_info['text_transform']};\n"
+            if style_info.get("font_style"):
+                css += f"    font-style: {style_info['font_style']};\n"
+            if style_info.get("paragraph_spacing") is not None:
+                css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
+            else:
+                css += "    margin: 10px 0;\n"
+            css += "}\n\n\n"
+
+    # セクションローカルのテキストスタイル（section__text_01等）の出力（有効時）
+    if TEXT_TOKEN_MODE == 'section_local' and TEXT_LOCAL_STYLES:
+        css += "/* Section-local Text Styles */\n"
+        for local_class, style_info in TEXT_LOCAL_STYLES.items():
+            css += f'''.{local_class} {{
+    font-family: {style_info["font_family"]};
+    font-size: {style_info["font_size"]}px;
+    font-weight: {style_info["font_weight"]};
+    line-height: {style_info["line_height"]};
+    letter-spacing: {style_info["letter_spacing"]}px;
+    text-align: {style_info["text_align"]};
+'''
+            if style_info.get("text_decoration"):
+                css += f"    text-decoration: {style_info['text_decoration']};\n"
+            if style_info.get("text_transform"):
+                css += f"    text-transform: {style_info['text_transform']};\n"
+            if style_info.get("font_style"):
+                css += f"    font-style: {style_info['font_style']};\n"
+            if style_info.get("paragraph_spacing") is not None:
+                css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
+            else:
+                css += "    margin: 10px 0;\n"
+            css += "}\n\n\n"
+
+    # Figmaテキストスタイル（figma-style-）の出力（許可時）
+    if FIGMA_STYLE_CSS:
+        css += "/* Figma Text Styles */\n"
+        # 収集済みテキストスタイルから、Figmaスタイル名由来のクラスを優先生成
+        for class_name, style_info in collected_text_styles.items():
+            if not class_name.startswith("figma-style-"):
+                continue
+            css += f'''.{class_name} {{
+    font-family: {style_info["font_family"]};
+    font-size: {style_info["font_size"]}px;
+    font-weight: {style_info["font_weight"]};
+    line-height: {style_info["line_height"]};
+    letter-spacing: {style_info["letter_spacing"]}px;
+    text-align: {style_info["text_align"]};
+'''
+            if style_info.get("text_decoration"):
+                css += f"    text-decoration: {style_info['text_decoration']};\n"
+            if style_info.get("text_transform"):
+                css += f"    text-transform: {style_info['text_transform']};\n"
+            if style_info.get("font_style"):
+                css += f"    font-style: {style_info['font_style']};\n"
+            if style_info.get("paragraph_spacing") is not None:
+                css += f"    margin: 0 0 {int(style_info['paragraph_spacing'])}px 0;\n"
+            else:
+                css += "    margin: 10px 0;\n"
+            css += "}\n\n\n"
     
     css += '''/* Semantic Component Styles */
 .hero {
@@ -4127,7 +4311,7 @@ img {{
     if EQUALIZE_2COL_FALLBACK:
         css += '.layout-2col > * { flex: 1 1 0; min-width: 0; }\n\n'
 
-    # ノード固有スタイルを出力（インライン削減）
+    # ノード固有スタイルを出力（インライン禁止）
     css += '/* Node-specific styles (generated) */\n'
     node_styles = node_styles or {}
     for node_id, props in node_styles.items():
@@ -4149,6 +4333,17 @@ img {{
         sel = ", ".join(selectors)
         css += f'''{sel} {{
     {props_str};
+}}
+
+'''
+
+    # Custom class styles (wrapper backgrounds, etc.)
+    if CUSTOM_CLASS_STYLES:
+        css += '/* Custom class styles (generated) */\n'
+        for cls, props in CUSTOM_CLASS_STYLES.items():
+            body = ";\n    ".join(props)
+            css += f'''.{cls} {{
+    {body};
 }}
 
 '''
@@ -4191,6 +4386,13 @@ img {{
 
 /* Box Shadow */
 .shadow { box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06); }
+
+/* Clip (overflow hidden) */
+.clip { overflow: hidden; }
+
+/* Image helpers */
+img { max-width: 100%; height: auto; display: block; }
+.img-cover { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* Image-Text Layout Patterns */
 .image-text-layout {
@@ -4619,9 +4821,17 @@ def prune_unused_css(html_path: str, css_path: str, out_path: str):
 
 # テキストスタイル収集用辞書
 collected_text_styles = {}
+# Role-based typography styles collected when TEXT_ROLE_MODE is enabled
+ROLE_TEXT_STYLES: dict[str, dict] = {}
+# Section-local typography styles (TEXT_TOKEN_MODE=section_local)
+TEXT_LOCAL_STYLES: dict[str, dict] = {}
+# Per-section counters for enumerating local text/note tokens
+TEXT_LOCAL_COUNTERS: dict[str, dict] = {}
 # ノードごとのスタイルをCSSに出力するための収集
 collected_node_styles = {}
 COLLECT_NODE_STYLES = True
+# Custom class styles (non-node scoped), e.g., wrapper background for bg-fullbleed
+CUSTOM_CLASS_STYLES: dict[str, list[str]] = {}
 
 def merge_css_props(existing_props, new_props):
     """CSS プロパティリストをマージし、重複を防ぐ
@@ -4667,8 +4877,27 @@ def add_node_styles(node_id, style_props):
             return False
         p = prop.strip().lower()
         scope = NODE_STYLE_SCOPE
-        # Always allow these basics
-        always = (
+        # If visual-only is enabled, block layout props on non-text nodes
+        if N_NODE_VISUAL_ONLY and kind != 'text':
+            # Visuals always allowed
+            if p.startswith(('background', 'border', 'box-shadow', 'filter', 'backdrop-filter', 'mix-blend-mode')):
+                return True
+            # Decorative and container safety
+            if p.startswith('aspect-ratio'):
+                return True
+            if p.startswith('overflow'):
+                return True
+            if p.startswith('padding'):
+                return True
+            # Preserve intrinsic sizes for image/line nodes to avoid collapse
+            if kind in ('image','line') and (
+                p.startswith('width') or p.startswith('height') or p.startswith('min-width') or p.startswith('min-height') or p.startswith('max-width') or p.startswith('max-height')
+            ):
+                return True
+            # Otherwise block layout/dimension props on non-text nodes
+            return False
+        # Otherwise allow a broader set including layout
+        if (
             p.startswith('display:') or p.startswith('flex-') or p.startswith('justify-') or p.startswith('align-') or
             p.startswith('gap:') or p.startswith('padding') or p.startswith('overflow:') or
             (p.startswith('width:') and not SUPPRESS_CONTAINER_WIDTH) or
@@ -4676,8 +4905,7 @@ def add_node_styles(node_id, style_props):
             p.startswith('max-width:') or
             p.startswith('height:') or p.startswith('min-height:') or p.startswith('max-height:') or
             p.startswith('transform:') or p.startswith('transform-origin')
-        )
-        if always:
+        ):
             return True
         if scope == 'aggressive':
             return True
@@ -4693,12 +4921,11 @@ def add_node_styles(node_id, style_props):
                 p.startswith('color:') or p.startswith('text-decoration') or p.startswith('text-transform') or
                 p.startswith('font-style') or p.startswith('margin:')
             )
-        # containers / rects / image / line: allow visuals but not text color
+        # containers / rects / image / line (conservative scope)
         return (
             p.startswith('background') or p.startswith('border') or p.startswith('box-shadow') or
             p.startswith('filter') or p.startswith('backdrop-filter') or p.startswith('mix-blend-mode') or
             p.startswith('aspect-ratio') or
-            p.startswith('width') or p.startswith('height') or p.startswith('min-width') or p.startswith('min-height') or
             p.startswith('overflow') or p.startswith('transform') or p.startswith('transform-origin')
         )
 
@@ -4725,12 +4952,27 @@ def collect_text_styles_from_element(element, figma_styles=None):
         style_info = extract_text_styles(element, figma_styles)
         element_name = element.get("name", "")
         element_id = element.get("id", "")
-        class_name = generate_text_class(style_info, element_name, element_id)
-        collected_text_styles[class_name] = style_info
-        # Figmaスタイル名がある場合は、そのクラスも同時に収集
-        if style_info.get("figma_style_name"):
+        # 役割ベース/セクションローカルを使う場合は text-size-* を収集しない
+        if (TEXT_TOKEN_MODE != 'section_local') and (not TEXT_ROLE_MODE):
+            class_name = generate_text_class(style_info, element_name, element_id)
+            collected_text_styles[class_name] = style_info
+        # Figmaスタイル名がある場合は、そのクラスも同時に収集（許可時のみ）
+        if style_info.get("figma_style_name") and FIGMA_STYLE_CSS:
             figma_class = style_info["figma_style_name"].lower().replace(" ", "-").replace("/", "-")
             collected_text_styles[f"figma-style-{figma_class}"] = style_info
+        # 役割ベース（t-*）のCSS用に、役割→スタイルの代表値を登録
+        if TEXT_ROLE_MODE:
+            tag = detect_heading_level(element)
+            if tag and tag.startswith('h'):
+                role = f"t-heading--{tag}"
+            else:
+                try:
+                    fs = int(style_info.get("font_size") or 0)
+                except Exception:
+                    fs = 0
+                fw = int(style_info.get("font_weight") or 0)
+                role = "t-note" if (fs <= 12 and fw <= 500) else "t-body"
+            ROLE_TEXT_STYLES.setdefault(role, style_info)
     
     # 子要素も再帰的に処理
     for child in element.get("children", []):

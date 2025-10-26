@@ -18,3 +18,6 @@ __pycache__/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Archived/unmaintained tools (exclude from status/diff)
+tools/_archive/

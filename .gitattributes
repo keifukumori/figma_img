@@ -1,0 +1,3 @@
+tools/_archive/** -diff
+tools/_archive/** linguist-vendored
+tools/_archive/** export-ignore

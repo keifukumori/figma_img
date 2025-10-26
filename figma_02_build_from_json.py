@@ -94,19 +94,19 @@ def main():
             if post_unify:
                 try:
                     print(f"[POST] Unify styles at: {root}")
-                    _subprocess.run(["python3", "tools/unify_styles.py", "--root", root], check=False)
+                    _subprocess.run(["python3", "tools/pipeline/unify_styles.py", "--root", root], check=False)
                 except Exception as e:
                     print(f"[POST] unify_styles failed: {e}")
             if post_common:
                 try:
                     print(f"[POST] Inject common utils at: {root}")
-                    _subprocess.run(["python3", "tools/postprocess_dedupe.py", "--root", root, "--inject-css"], check=False)
+                    _subprocess.run(["python3", "tools/pipeline/postprocess_dedupe.py", "--root", root, "--inject-css"], check=False)
                 except Exception as e:
                     print(f"[POST] postprocess_dedupe failed: {e}")
             if post_components:
                 try:
                     print(f"[POST] Annotate generic components at: {root}")
-                    _subprocess.run(["python3", "tools/annotate_generic_components.py", "--root", root], check=False)
+                    _subprocess.run(["python3", "tools/pipeline/annotate_generic_components.py", "--root", root], check=False)
                 except Exception as e:
                     print(f"[POST] annotate_generic_components failed: {e}")
         else:

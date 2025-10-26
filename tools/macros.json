@@ -1,0 +1,110 @@
+{
+  "macros": [
+    {
+      "name": "stack",
+      "tokens": [
+        "fx-col",
+        "ai-flex-start",
+        "jc-flex-start",
+        "fw-nowrap"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "row-start",
+      "tokens": [
+        "fx-row",
+        "ai-flex-start"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "stack-center",
+      "tokens": [
+        "fx-col",
+        "ai-flex-start",
+        "jc-center"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "fill",
+      "tokens": [
+        "as-stretch",
+        "w-full"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "col-center",
+      "tokens": [
+        "fx-col",
+        "ai-center"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "col-start",
+      "tokens": [
+        "fx-col",
+        "ai-flex-start"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "row",
+      "tokens": [
+        "fx-row",
+        "ai-center",
+        "jc-flex-start",
+        "fw-nowrap"
+      ],
+      "emit_css": true,
+      "collapse": false
+    },
+    {
+      "name": "row-between",
+      "tokens": [
+        "fx-row",
+        "ai-center",
+        "jc-space-between",
+        "fw-nowrap"
+      ],
+      "emit_css": true,
+      "collapse": false
+    },
+    {
+      "name": "pad-xs",
+      "tokens": [
+        "px-8",
+        "py-8"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "pad-sm",
+      "tokens": [
+        "px-16",
+        "py-16"
+      ],
+      "emit_css": true,
+      "collapse": true
+    },
+    {
+      "name": "pad-md",
+      "tokens": [
+        "px-24",
+        "pb-24"
+      ],
+      "emit_css": true,
+      "collapse": true
+    }
+  ]
+}
