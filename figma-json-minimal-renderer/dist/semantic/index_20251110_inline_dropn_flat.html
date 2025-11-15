@@ -1,0 +1,1856 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project</title>
+    <style>
+*{box-sizing:border-box}
+img{max-width:100%;height:auto;display:block}
+.img-cover{width:100%;height:100%;object-fit:cover;display:block}
+.breadcrumbs{
+    display:flex;
+    flex-direction:row;
+    gap:8px;
+    align-items:center
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.breadcrumbs__content{
+    background-color:#FFFFFF
+}
+.breadcrumbs__content, .breadcrumbs__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:24px;
+    font-weight:500;
+    line-height:38.4px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:38px;
+    font-weight:600;
+    line-height:60.8px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame{
+    display:flex;
+    flex-direction:column;
+    gap:120px
+}
+.frame__title{
+    font-size:28px;
+    font-weight:600;
+    line-height:44.8px;
+    color:#FFFFFF
+}
+.frame__text{
+    font-size:18px;
+    font-weight:400;
+    line-height:28.8px;
+    color:#FFFFFF
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#FFFFFF
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#FFFFFF
+}
+.frame__text{
+    font-size:18px;
+    font-weight:400;
+    line-height:28.8px;
+    color:#271D1B
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:30.0px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#212121
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:700;
+    line-height:19.2px;
+    color:#FFFFFF
+}
+.frame__decor{
+    background-color:#D9D9D9
+}
+.frame__text{
+    font-size:16px;
+    font-weight:700;
+    line-height:19.2px;
+    color:#FFFFFF
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:30.0px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#212121
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__decor{
+    background-color:#D9D9D9
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:30.0px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#212121
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#1A1A1A
+}
+.frame__content{
+    background-color:#1A1A1A;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-right:16px;
+    padding-bottom:4px;
+    padding-left:16px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-bottom:4px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#FFFFFF
+}
+.frame__title{
+    font-size:26px;
+    font-weight:600;
+    line-height:41.6px;
+    color:#FFFFFF
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:600;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__decor, .frame__media{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__text{
+    font-size:14px;
+    font-weight:700;
+    line-height:16.8px;
+    color:#FFFFFF
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:600;
+    line-height:25.6px;
+    color:#FFFFFF
+}
+.frame__decor{
+    background-color:#F8F3ED
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:4px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#666666
+}
+.frame__text{
+    font-size:16px;
+    font-weight:600;
+    line-height:25.6px;
+    color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.frame__decor, .frame__media{
+    flex:0 0 40%;
+    max-width:40%
+}
+.frame__content{
+    flex:1 1 0;
+    min-width:0
+}
+.frame__content{
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    align-items:center
+}
+.frame__title{
+    font-size:38px;
+    font-weight:600;
+    line-height:60.8px;
+    color:#07275E
+}
+.frame__title{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#1A1A1A
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:40px;
+    align-items:center
+}
+.frame__text{
+    font-size:14px;
+    font-weight:700;
+    line-height:16.8px;
+    color:#FFFFFF
+}
+.frame{
+    background-color:#FFFFFF;
+    display:flex;
+    flex-direction:column;
+    gap:120px;
+    padding-top:120px;
+    padding-right:420px;
+    padding-bottom:120px;
+    padding-left:420px;
+    align-items:center
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-bottom:4px;
+    align-items:center
+}
+.frame__decor{
+    background-color:#A88A69
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:24px;
+    align-items:center
+}
+.frame__content, .frame__title{
+    font-size:28px;
+    font-weight:600;
+    line-height:44.8px;
+    color:#000000
+}
+.frame__content{
+    background-color:#F2F2F2;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-right:16px;
+    padding-bottom:4px;
+    padding-left:16px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:18px;
+    font-weight:600;
+    line-height:28.8px;
+    color:#000000
+}
+.frame__content{
+    background-color:#FFFFFF;
+    display:flex;
+    flex-direction:row;
+    gap:8px;
+    padding-top:16px;
+    padding-right:16px;
+    padding-bottom:16px;
+    padding-left:16px;
+    align-items:center
+}
+.frame__text{
+    font-size:16px;
+    font-weight:600;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__content{
+    background-color:#FFFFFF;
+    display:flex;
+    flex-direction:row;
+    gap:8px;
+    padding-top:16px;
+    padding-right:16px;
+    padding-bottom:16px;
+    padding-left:16px;
+    align-items:center
+}
+.frame__content, .frame__text{
+    font-size:16px;
+    font-weight:600;
+    line-height:25.6px;
+    color:#1A1A1A
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__text{
+    font-size:24px;
+    font-weight:500;
+    line-height:38.4px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:38px;
+    font-weight:600;
+    line-height:60.8px;
+    color:#1A1A1A
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__content, .frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__content{
+    background-color:#FFF207;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-right:24px;
+    padding-left:24px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:18px;
+    font-weight:400;
+    line-height:28.8px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:500;
+    line-height:16.9px;
+    color:#212121
+}
+.frame__content{
+    background-color:#FFF207;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-right:6px;
+    padding-bottom:4px;
+    padding-left:6px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:24.2px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#FFFFFF
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:500;
+    line-height:16.9px;
+    color:#212121
+}
+.frame__content{
+    background-color:#FFF207;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-right:6px;
+    padding-bottom:4px;
+    padding-left:6px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:24.2px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#FFFFFF
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#A88A69
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:32.0px;
+    color:#212121
+}
+.frame__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:500;
+    line-height:16.9px;
+    color:#212121
+}
+.frame__content{
+    background-color:#FFF207;
+    display:flex;
+    flex-direction:row;
+    gap:10px;
+    padding-top:4px;
+    padding-right:6px;
+    padding-bottom:4px;
+    padding-left:6px;
+    justify-content:center;
+    align-items:center
+}
+.frame__title{
+    font-size:20px;
+    font-weight:700;
+    line-height:24.2px;
+    color:#1A1A1A
+}
+.frame__text{
+    font-size:14px;
+    font-weight:400;
+    line-height:22.4px;
+    color:#212121
+}
+.frame__content, .frame__text{
+    font-size:14px;
+    font-weight:600;
+    line-height:22.4px;
+    color:#FFFFFF
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    background-color:#212121
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__content{
+    display:flex;
+    flex-direction:row;
+    gap:16px;
+    align-items:center
+}
+.frame__content{
+    background-color:#CB0000
+}
+.frame__content{
+    background-color:#CB0000
+}
+.frame__content{
+    background-color:#CB0000
+}
+.frame__content{
+    background-color:#212121
+}
+.frame__content{
+    background-color:#FFFFFF
+}
+.frame__decor{
+    background-color:#D9D9D9
+}
+.frame__content{
+    background-color:#CB0000
+}
+.frame__content{
+    background-color:#CB0000
+}
+.frame__decor{
+    background-color:rgba(0, 0, 0, 0.50)
+}
+.frame__title{
+    font-size:24px;
+    font-weight:600;
+    line-height:38.4px;
+    color:#FFFFFF
+}
+    </style>
+  </head>
+  <body>
+<div class="breadcrumbs">
+<section class="breadcrumbs">
+<div class="frame-1731">
+<div class="frame-1732">
+<div class="frame-626949">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">エステティックTBC TOP</p>
+</div>
+<div class="frame-627099">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">テキスト</p>
+</div>
+<div class="frame-627101">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">テキスト</p>
+</div>
+<div class="frame-627102">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">テキスト</p>
+</div>
+<div class="frame-627103">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">テキスト</p>
+</div>
+<div class="frame-627100">
+<div class="breadcrumbs__content">
+<div class="vector">
+</div>
+</div>
+<p class="breadcrumbs__content breadcrumbs__text">テキストが入ります。テキストが入ります。テキストが入ります。テキストが入ります。</p>
+</div>
+</div>
+</div>
+</section>
+</div>
+<div class="frame">
+<div class="h1_-_sp">
+<div class="frame">
+<div class="top_h1_aesthetic">
+<p class="frame__text">Oswald</p>
+<div class="frame-627277">
+<h2 class="frame__title">都道府県</h2>
+<h2 class="frame__title">スーパー脱毛について</h2>
+<h2 class="frame__title">都道府県</h2>
+</div>
+</div>
+<div class="line-8">
+</div>
+</div>
+</div>
+<section class="frame">
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<h2 class="frame__title">MEN&#x27;S TBCはトータルエステティックサロン</h2>
+<p class="frame__text">TBCグループは2026年に創業50周年を迎えます。 半世紀にわたり、長年積み重ねてきた経験と、お客様の多様なご要望にお応えするトータルエステティックで、お客様の美をサポートしてまいりました。「全てはお客様が望むキレイの実現のために。」 これからもMEN&#x27;S TBCならではの高品質なサービスを提供してまいります。</p>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="h3">
+<div class="line-41">
+</div>
+<div class="frame-627371">
+<h2 class="frame__title">他の脱毛専用サロンとは違う、</h2>
+</div>
+<div class="frame-627372">
+<h2 class="frame__title">美容電気脱毛を採用しているから</h2>
+</div>
+<div class="frame-627373">
+<h2 class="frame__title">美容電気脱毛を採用しているから</h2>
+</div>
+<div class="frame-627290">
+<div class="line-46">
+</div>
+<div class="line-44">
+</div>
+<div class="line-45">
+</div>
+</div>
+</div>
+<p class="frame__text">毛を無くすだけでなく肌の仕上がりの美しさにこだわる「脱毛」をはじめ、 エステティックだからこそできるハンド技術とマシントリートメントを提供する「フェイシャル」「ボディ」で、 ご自身も知らなかった美しさを引き出します。</p>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<div class="frame__decor">
+</div>
+<div class="frame">
+<div class="frame">
+<div class="h2_">
+<h2 class="frame__title">Oswald</h2>
+<div class="frame">
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+<h2 class="frame__title">スーパー脱毛について</h2>
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+</div>
+</div>
+<h2 class="frame__title">ムダ毛を無くす だけでなく、 脱毛後の素肌もケアする MEN&#x27;S TBCの脱毛。</h2>
+</div>
+<p class="frame__text">気になるムダ毛を無くしたい、目立たなくしたい、自己処理を減らしたい。そんな一人ひとりのニーズや毛質・肌状態に合わせて、なめらかな素肌へと導く脱毛。繊細な素肌をいたわりながら脱毛するために、まず毛質・毛量・肌質等を細かくチェックします。今までの自己処理の方法や肌トラブルの有無、体質などについても詳しくお伺いし、お客様のご予定とご希望に合わせた通い方をご提案いたします。</p>
+</div>
+<div class="frame">
+<p class="frame__text">画像をご指定御支給ください</p>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__decor">
+</div>
+<div class="frame">
+<p class="frame__text">画像をご指定御支給ください</p>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="h2_">
+<h2 class="frame__title">Oswald</h2>
+<div class="frame">
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+<h2 class="frame__title">スーパー脱毛について</h2>
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+</div>
+</div>
+<h2 class="frame__title">エステティックだからこそできる フェイシャルトリートメントで、 強く、整った素肌へ。</h2>
+</div>
+<p class="frame__text">整った素肌は、正しい知識に基づいた適切なスキンケアでキープする事ができます。MEN&#x27;S TBCのフェイシャルは、素肌へのやさしさを考え、皮膚科学に基づき開発されたコスメ・美容機器を使用。リラクセーションとサイエンスを調和させ、健康的で美しい素肌に整えます。また、お客様の肌をしっかりと分析させていただくとともに、ご要望をお伺いし、一人ひとりに合わせた通い方をご提案。 オリジナル化粧品や美容機器を活用し、美しい素肌を目指します。</p>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__decor">
+</div>
+<div class="frame">
+<div class="frame">
+<div class="h2_">
+<h2 class="frame__title">Oswald</h2>
+<div class="frame">
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+<h2 class="frame__title">スーパー脱毛について</h2>
+<h2 class="frame__title">スーパー脱毛経験者</h2>
+</div>
+</div>
+<h2 class="frame__title">「ただ痩せるのではなく、 魅力的に痩せる」をコンセプトに、 あなたの理想体型へ導く ボディコース。</h2>
+</div>
+<p class="frame__text">お客様一人ひとりのご希望に合わせて「シェイプ〈限定サロン〉」と「トリートメント」のコースをご用意。「シェイプ〈限定サロン〉」は、お客様の現在のボディタイプと目指すボディに合わせてコースを選択。「トリートメント」は、自分では手の届かないボディのすみずみまで丁寧にお手入れいたします。リフレッシュしながら、なめらかな素肌へと美しく磨き上げます。</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="h3">
+<div class="line-41">
+</div>
+<h2 class="frame__title">エステティックTBCは全国直営サロン</h2>
+<div class="frame-627376">
+<div class="frame__content">
+<h2 class="frame__title">全てのサロンで高品質なサービス</h2>
+</div>
+<div class="frame__content">
+<h2 class="frame__title">をご提供いたします。</h2>
+</div>
+</div>
+<div class="frame-627372">
+<h2 class="frame__title">処理するうちに脱毛が終了し、自己処理不要に!</h2>
+</div>
+<div class="frame-627373">
+<h2 class="frame__title">美容電気脱毛を採用しているから</h2>
+</div>
+<div class="frame-627290">
+<div class="line-46">
+</div>
+<div class="line-44">
+</div>
+<div class="line-45">
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame__content">
+<h2 class="frame__title">お客様に「安心」して通っていただけるよう、 常にスタッフの教育を行なっております。</h2>
+<div class="frame-627294">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">お客様に「安心」して通っていただけるよう、</h2>
+</div>
+<div class="frame-627293">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">常にスタッフの教育を行なっています。</h2>
+</div>
+</div>
+<p class="frame__text">MEN&#x27;S TBCでは自社の教育、研修制度だけではなく、AEA認定エステティシャン資格・CPE・認定美容脱毛エステティシャン資格等、さまざまな美容関連の資格及び公的資格等の取得を奨励しています。</p>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame__content">
+<div class="frame-627294">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">エステティック関連団体への入会</h2>
+</div>
+</div>
+<p class="frame__text">MEN&#x27;S TBCのエステティシャンは全員「一般社団法人　日本スキン・エステティック協会（JSA）」に入会し、「JSA認定エレメンタリーエステティシャン」、「JSA認定美容電気脱毛プライマリーエステティシャン」の資格を取得。安心で安全なエステティックサロンを目指しております。</p>
+<div class="button-circlelink">
+<p class="frame__text">リンクテキスト</p>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame__content">
+<div class="frame-627295">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">安心してコースをお受けいただくために、くり返し効果・安全性を確認し、</h2>
+</div>
+<div class="frame-627293">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">技術開発をしております。</h2>
+</div>
+</div>
+<p class="frame__text">エステティック業界では珍しい自社研究施設「TBCビューティ＆ライフ研究所」では、1977年の設立以来、コース開発やサロンで使用する化粧品や健康食品、美容機器などを日々開発しております。</p>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame__content">
+<div class="frame-627295">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">MEN&#x27;S TBCが提供するスーパー脱毛用機器について</h2>
+</div>
+</div>
+<p class="frame__text">MEN&#x27;S TBCではNPO法人日本エステティック機構が行なっている認証制度「エステティック機器認証」を取得したエステティック電気脱毛機器を使用。 さまざまな「基準」「規格」の適合審査を受け、快適な施術を行なうためのエステティック機器として認証されました。認証番号：0031062101（0）</p>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame__content">
+<div class="frame-627294">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">MEN&#x27;S TBCが提供する美容ライト脱毛（エピラッシュ）について</h2>
+</div>
+</div>
+<p class="frame__text">安全なサービス提供のために、TBCでは一般社団法人 日本エステティック振興協議会の定める、エステティックサロンにおける美容ライト脱毛の正しい施術及び使用する機器基準を順守しております。</p>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<div class="frame">
+<p class="frame__text">フリー素材</p>
+</div>
+<div class="frame">
+<h2 class="frame__title">気軽にお通いいただけるサロンを目指しております。</h2>
+<div class="frame-627294">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">気軽にお通いいただけるサロンを目指しております。</h2>
+</div>
+</div>
+<p class="frame__text">MEN&#x27;S TBCは全国主要都市に直営サロンを展開しているので、時間や場所の都合がつきやすく、通いやすいサロンがきっと見つかります。</p>
+<div class="button-ladies">
+<p class="frame__text">テキストが入ります</p>
+<div class="frame-1722">
+<div class="arrow-2">
+</div>
+<div class="arrow-1">
+</div>
+</div>
+<div class="icon-chevron-right">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame-627292">
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">適正な経営管理、法令遵守等常に健全な経営体制を心がけております。</h2>
+</div>
+<h2 class="frame__title">適正な経営管理、法令遵守等常に健全な経営体制を心がけております。</h2>
+<div class="frame">
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+<div class="list-menu">
+<div class="frame__content">
+<div class="icon-marker-disc">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__text">リストなしテキスト</p>
+<div class="frame-626952">
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="vector">
+</div>
+<div class="icon-ectangle-arrow-up-right">
+<div class="vector">
+</div>
+</div>
+<div class="vector">
+</div>
+<p class="frame__text">(0.00MB)</p>
+</div>
+</div>
+</div>
+</div>
+<div class="button-ladies">
+<p class="frame__text">テキストが入ります</p>
+<div class="frame-1722">
+<div class="arrow-2">
+</div>
+<div class="arrow-1">
+</div>
+</div>
+<div class="icon-chevron-right">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__content">
+<div class="frame">
+<div class="frame__media frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=image 73" alt="image 73" width="300" height="200" />
+</div>
+<div class="frame__content">
+<h2 class="frame__title">TBC 安心宣言</h2>
+</div>
+</div>
+<h2 class="frame__title">無理な勧誘はいたしません。 お客様のご希望に添ったエステティックサービスでキレイを目指します。</h2>
+<p class="frame__text">私たちは全てのお客様のご希望をかなえられるサロンを目指しております。 そのため、お客様が望まない勧誘をせず、カウンセリング時にお伺いしたご希望を基に一人ひとりのご希望に添った適切なプランをご提案いたします。</p>
+<p class="frame__text">TBCグループ株式会社　取締役 シニアアドバイザー 医学博士 保健学博士　手塚 圭子</p>
+</div>
+<div class="frame__content">
+<div class="frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+</div>
+</div>
+<div class="frame">
+<p class="frame__text">背景レンポジ</p>
+</div>
+</div>
+</div>
+</section>
+<section class="frame">
+<div class="line">
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__content">
+<div class="frame__decor">
+</div>
+</div>
+<div class="frame__content">
+<h2 class="frame__content frame__title">関連情報</h2>
+<div class="frame__content">
+<h2 class="frame__title">MEN&#x27;S TBCについて</h2>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame__content">
+<div class="frame__decor">
+<img class="img-cover" src="https://via.placeholder.com/300x200/dddddd/888888?text=Image" alt="Image" width="300" height="200" />
+</div>
+<p class="frame__text">親権者様等・未成年の方へ</p>
+<div class="icon-chevron-right">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__content">
+<p class="frame__content frame__text">メンバーとビジター/ご利用方法/ 各種お支払い方法</p>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<div class="frame-626926">
+<div class="frame">
+<div class="ellipse">
+</div>
+<div class="frame">
+<div class="top_h1_aesthetic">
+<p class="frame__text">Oswald</p>
+<div class="frame">
+<h2 class="frame__title">都道府県</h2>
+<h2 class="frame__title">スーパー脱毛について</h2>
+<h2 class="frame__title">都道府県</h2>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<h2 class="frame__content frame__title">はじめての方</h2>
+<div class="frame__content">
+<h2 class="frame__title">限定</h2>
+</div>
+</div>
+<p class="frame__text">はじめての方のために、リーズナブルな価格にて本格コースを体験いただけるキャンペーンを実施しております。</p>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<p class="frame__text">ボディシェイプ</p>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<h2 class="frame__title">下っ腹ボディシェイプ 体験コース</h2>
+<p class="frame__text">エレクトロスリムM-S（60分）+ 無料カウンセリング</p>
+<div class="frame">
+<p class="frame__content frame__text">8,000円（税込）</p>
+<div class="frame__content">
+<h2 class="frame__title">00%OFF</h2>
+</div>
+</div>
+<div class="frame">
+<p class="frame__text">※お一人様いずれか１コース1回限りの特別体験価格。</p>
+</div>
+</div>
+<div class="button-ladies">
+<p class="frame__content frame__text">テキストが入ります</p>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<p class="frame__text">脱毛</p>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<h2 class="frame__title">ヒゲ脱毛 体験コース</h2>
+<p class="frame__text">メンズTBCスーパー脱毛150本体験コース+無料カウンセリング</p>
+<div class="frame">
+<p class="frame__content frame__text">1,000円（税込）</p>
+<div class="frame__content">
+<h2 class="frame__title">66%OFF</h2>
+</div>
+</div>
+<div class="frame">
+<p class="frame__text">※お一人様1回限りの特別体験価格。 ※ヒゲ脱毛体験コース(顔・首)は18歳以上から利用可能です。</p>
+</div>
+</div>
+<div class="button-ladies">
+<p class="frame__content frame__text">テキストが入ります</p>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<p class="frame__text">フェイシャル</p>
+</div>
+</div>
+<div class="frame">
+<div class="frame">
+<div class="frame">
+<h2 class="frame__title">カラダ脱毛 体験コース</h2>
+<p class="frame__text">メンズTBCスーパー脱毛150本体験コース+無料カウンセリング</p>
+<div class="frame">
+<p class="frame__content frame__text">1,000円（税込）</p>
+<div class="frame__content">
+<h2 class="frame__title">55%OFF</h2>
+</div>
+</div>
+<div class="frame">
+<p class="frame__text">※お一人様1回限りの特別体験価格。 ※カラダ脱毛体験コースは15歳以上から利用可能です。（手足の甲・指は18歳以上）</p>
+</div>
+</div>
+<div class="button-ladies">
+<p class="frame__content frame__text">テキストが入ります</p>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="slide-controller">
+<div class="frame">
+<div class="frame__content">
+</div>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="ellipse">
+</div>
+<div class="frame">
+<div class="frame__content">
+<div class="frame-1771">
+<div class="ellipse-14">
+</div>
+<div class="ellipse-19">
+</div>
+<div class="ellipse-20">
+</div>
+<div class="ellipse-18">
+</div>
+</div>
+<div class="ellipse-14">
+</div>
+<div class="ellipse-15">
+</div>
+<div class="ellipse-16">
+</div>
+</div>
+<div class="frame__content">
+</div>
+</div>
+<div class="frame">
+<div class="frame__content">
+</div>
+<div class="frame__content">
+</div>
+</div>
+<div class="frame">
+<div class="frame__content">
+</div>
+<div class="frame__content">
+<div class="vector">
+</div>
+</div>
+</div>
+<div class="frame__decor">
+</div>
+<div class="frame">
+<div class="frame-1738">
+<div class="frame__content">
+</div>
+<div class="frame__content">
+</div>
+</div>
+</div>
+</div>
+<div class="frame__decor">
+</div>
+<h2 class="frame__title">トップＦＩＸ後反映</h2>
+</div>
+</div>
+  </body>
+</html>

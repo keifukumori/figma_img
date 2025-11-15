@@ -1,0 +1,1052 @@
+diff --git a/fetch_figma_layout.py b/fetch_figma_layout.py
+index 98a6a65..3476a70 100644
+--- a/fetch_figma_layout.py
++++ b/fetch_figma_layout.py
+@@ -1041,12 +1041,20 @@ def clean_figma_json(data):
+         fills = element.get('fills', [])
+         strokes = element.get('strokes', [])
+         element_type = element.get('type', '')
++        # Auto Layout を持つ要素は、子が1つでもレイアウト意図が残るため削除しない
++        try:
++            if (element.get('layoutMode') or 'NONE').upper() in ('HORIZONTAL', 'VERTICAL'):
++                auto_layout_container = True
++            else:
++                auto_layout_container = False
++        except Exception:
++            auto_layout_container = False
+ 
+         if (len(effects) == 0 and len(fills) == 0 and len(strokes) == 0 and
+             element_type in ['FRAME', 'GROUP']):
+             # 子要素が1個以下なら削除対象
+             children = element.get('children', [])
+-            if len(children) <= 1:
++            if (len(children) <= 1) and (not auto_layout_container):
+                 removed_count["empty"] += 1
+                 return True
+ 
+@@ -1057,7 +1065,7 @@ def clean_figma_json(data):
+             name = element.get('name', '').lower()
+             if any(keyword in name for keyword in ['frame', 'group', 'container', 'wrapper']):
+                 children = element.get('children', [])
+-                if len(children) == 1:  # 1個の子要素のみを包むFRAME
++                if len(children) == 1 and (not auto_layout_container):  # Auto Layoutなら維持
+                     removed_count["layout_only"] += 1
+                     return True
+ 
+@@ -1504,6 +1512,30 @@ def analyze_layout_structure(element):
+ 
+     layout_mode = element.get("layoutMode", "NONE")
+ 
++    # Capture Auto Layout intents for utility tokenization
++    try:
++        _gap_val = int(element.get("itemSpacing", 0) or 0)
++    except Exception:
++        _gap_val = 0
++    def _map_align_token(v: str) -> str | None:
++        v = (v or "").upper()
++        return {
++            "MIN": "flex-start",
++            "CENTER": "center",
++            "MAX": "flex-end",
++            "SPACE_BETWEEN": "space-between",
++        }.get(v)
++    try:
++        _justify_val = _map_align_token(element.get("primaryAxisAlignItems"))
++    except Exception:
++        _justify_val = None
++    try:
++        _align_val = _map_align_token(element.get("counterAxisAlignItems"))
++    except Exception:
++        _align_val = None
++    _wrap_raw = element.get("layoutWrap")
++    _wrap_val = "wrap" if (_wrap_raw == "WRAP") else "nowrap"
++
+     # 1) レイアウトグリッドの列数
+     grid_info = None
+     for grid in element.get("layoutGrids", []) or []:
+@@ -1533,7 +1565,14 @@ def analyze_layout_structure(element):
+             info["type"] = "multi-column"
+         else:
+             info["type"] = "single"
+-        info["gap"] = grid_info.get("gutter")
++        # Prefer explicit itemSpacing when present; otherwise fall back to grid gutter
++        info["gap"] = int(element.get("itemSpacing", 0) or grid_info.get("gutter") or 0)
++        # Carry alignment/wrap intents for utility tokenization
++        if _justify_val:
++            info["justify"] = _justify_val
++        if _align_val:
++            info["align"] = _align_val
++        info["wrap"] = _wrap_val
+         return info
+ 
+     # 子要素の位置・サイズ収集
+@@ -1583,6 +1622,13 @@ def analyze_layout_structure(element):
+             info["type"] = "multi-column"
+         else:
+             info["type"] = "single"
++        # Attach gap/align intents for horizontal auto layout
++        info["gap"] = _gap_val
++        if _justify_val:
++            info["justify"] = _justify_val
++        if _align_val:
++            info["align"] = _align_val
++        info["wrap"] = _wrap_val
+     else:
+         info = None
+ 
+@@ -1631,6 +1677,14 @@ def analyze_layout_structure(element):
+     # 決定：grid > auto > position
+     if info and info.get("columns", 1) > 1:
+         return info
++    # Even in position-based inference, propagate element intents
++    if pos_info is not None:
++        pos_info["gap"] = _gap_val
++        if _justify_val:
++            pos_info["justify"] = _justify_val
++        if _align_val:
++            pos_info["align"] = _align_val
++        pos_info["wrap"] = _wrap_val
+     return pos_info
+ 
+ def map_auto_layout_inline_styles(element):
+@@ -1846,6 +1900,13 @@ def generate_layout_class(layout_info):
+         ai = _map_align((layout_info or {}).get("align"), 'ai')
+         if ai:
+             classes.append(ai)
++        # flex-wrap flag -> token
++        try:
++            wrap = (layout_info or {}).get("wrap")
++            if (wrap or "").strip().lower() == "wrap":
++                classes.append("fw-wrap")
++        except Exception:
++            pass
+ 
+         return " ".join(classes)
+     except Exception:
+@@ -2031,6 +2092,14 @@ def extract_effects_styles(element):
+     box_shadows = []  # drop-shadow と inner-shadow を収集
+     filters = []      # blur effects用
+ 
++    # Containers with children should not receive inner shadows directly, as it darkens inner content
++    try:
++        t = (element.get('type') or '').upper()
++        has_children = bool(element.get('children'))
++        is_container = (t in ('FRAME', 'GROUP')) and has_children
++    except Exception:
++        is_container = False
++
+     for effect in effects:
+         if not effect.get("visible", True):
+             continue
+@@ -2055,6 +2124,9 @@ def extract_effects_styles(element):
+             box_shadows.append(shadow_str)
+ 
+         elif effect_type == "INNER_SHADOW":
++            if is_container:
++                # Skip inner shadow on container nodes to avoid darkening inner content
++                continue
+             color = effect.get("color", {})
+             r = int(round(float(color.get("r", 0)) * 255))
+             g = int(round(float(color.get("g", 0)) * 255))
+@@ -2403,12 +2475,9 @@ def _has_padding(node):
+ def _has_layout_role(node):
+     try:
+         mode = (node.get('layoutMode') or 'NONE').upper()
+-        if mode in ('HORIZONTAL','VERTICAL'):
+-            gap = float(node.get('itemSpacing') or 0)
+-            if gap > 0:
+-                return True
+-            return False
+-        return False
++        # Consider any Auto Layout container (HORIZONTAL/VERTICAL) as having a layout role,
++        # even when itemSpacing (gap) is 0. Alignment/wrap still matter and should not be flattened.
++        return mode in ('HORIZONTAL', 'VERTICAL')
+     except Exception:
+         return False
+ 
+@@ -3225,10 +3294,17 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
+             parts = [p for p in parts if not p.startswith('border-radius')]
+             if parts:
+                 style_parts.append('; '.join(parts))
+-        # Blend mode
+-        bm = extract_blend_mode_style(element)
+-        if bm:
+-            style_parts.append(bm)
++        # Blend mode: skip for containers (FRAME/GROUP with children) to avoid darkening inner content
++        try:
++            t = (element.get('type') or '').upper()
++            has_children = bool(element.get('children'))
++            is_container = (t in ('FRAME','GROUP')) and has_children
++        except Exception:
++            is_container = True
++        if not is_container:
++            bm = extract_blend_mode_style(element)
++            if bm:
++                style_parts.append(bm)
+ 
+         # Effects（シャドウ、ブラー）の適用
+         effects_style = extract_effects_styles(element)
+@@ -5508,24 +5584,61 @@ if SP_FRAME_NODE_ID:
+                 f.write(sp_css_full)
+ 
+             # --- Optional Single DOM output (PC DOM only; SP CSS under media query) ---
++            # In SINGLE_DOM mode we emit a single HTML (PC sections only) and a CSS bundle where:
++            # - PC core styles are emitted
++            # - SP core styles are wrapped in @media and SELECTORS ARE REWRITTEN from .n-* to alias classes
++            #   so that a single HTML (PC DOM) can respond to SP breakpoints using shared aliases.
++            def _rewrite_n_to_alias(css_text: str) -> str:
++                try:
++                    if not css_text:
++                        return css_text
++                    # Build map: safe_id -> alias (only those that exist)
++                    amap = NODE_ALIAS_CANDIDATE if isinstance(NODE_ALIAS_CANDIDATE, dict) else {}
++                    if not amap:
++                        return css_text
++                    import re as _re
++
++                    def rep_where(m):
++                        sid = m.group(1)
++                        al = amap.get(sid)
++                        return f'.{al}' if al else m.group(0)
++
++                    def rep_plain(m):
++                        sid = m.group(1)
++                        al = amap.get(sid)
++                        return f'.{al}' if al else m.group(0)
++
++                    # First replace :where(.n-xxx) in selectors
++                    out = _re.sub(r":where\(\.n-([a-zA-Z0-9_-]+)\)", rep_where, css_text)
++                    # Then replace plain .n-xxx in selectors
++                    out = _re.sub(r"(?<![a-zA-Z0-9_-])\.n-([a-zA-Z0-9_-]+)(?![a-zA-Z0-9_-])", rep_plain, out)
++                    return out
++                except Exception:
++                    return css_text
+             if SINGLE_DOM:
+                 try:
+                     single_dir = os.path.join(combined_dir, "single")
+                     os.makedirs(single_dir, exist_ok=True)
+ 
+-                    # HTML: PC sections only
++                    # HTML: PC sections only (single DOM)
+                     single_html = f'''<!DOCTYPE html>\n<html lang="ja">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>{PC_LAYOUT_STRUCTURE["project_name"]}</title>\n    <link rel="stylesheet" href="style-common.css">\n    <link rel="stylesheet" href="style.css">\n</head>\n<body>\n{pc_sections_html}\n</body>\n</html>'''
+-                    with open(os.path.join(single_dir, "index.html"), "w", encoding="utf-8") as f:
++                    # Write to single/ and also promote to combined root so index.html is single DOM
++                    single_index_path = os.path.join(single_dir, "index.html")
++                    with open(single_index_path, "w", encoding="utf-8") as f:
+                         f.write(single_html)
+ 
+                     # CSS: PC core + SP core inside media query + minimal overrides
+                     try:
+                         pc_css_core_sd = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
++                        # Rewrite PC .n-* to alias as well so HTML alias tokens respond uniformly
++                        pc_css_core_sd = _rewrite_n_to_alias(pc_css_core_sd)
+                     except Exception as e:
+                         print(f"[WARN] SINGLE_DOM PC CSS generation failed: {e}")
+                         pc_css_core_sd = ""
+                     try:
+                         sp_css_core_sd = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
++                        # Rewrite SP .n-* to alias so the single HTML (PC DOM) can use shared aliases under media
++                        sp_css_core_sd = _rewrite_n_to_alias(sp_css_core_sd)
+                     except Exception as e:
+                         print(f"[WARN] SINGLE_DOM SP CSS generation failed: {e}")
+                         sp_css_core_sd = ""
+@@ -5545,7 +5658,8 @@ if SP_FRAME_NODE_ID:
+                         ("\n/* SP styles (as media query) */\n@media (max-width: 768px) {\n" + "\n".join([("  " + ln) for ln in sp_css_core_sd.splitlines()]) + "\n}\n" if sp_css_core_sd else "") +
+                         "\n" + overrides
+                     )
+-                    with open(os.path.join(single_dir, "style.css"), "w", encoding="utf-8") as f:
++                    single_css_path = os.path.join(single_dir, "style.css")
++                    with open(single_css_path, "w", encoding="utf-8") as f:
+                         f.write(single_css)
+ 
+                     # Copy style-common.css if present
+@@ -5580,6 +5694,20 @@ if SP_FRAME_NODE_ID:
+                                     shutil.copy2(s, d)
+                     except Exception as e:
+                         print(f"[WARN] SINGLE_DOM images copy failed: {e}")
++                    # Promote single DOM artifacts to combined root (overwrite 2DOM index/style)
++                    try:
++                        import shutil
++                        shutil.copy2(single_index_path, os.path.join(combined_dir, "index.html"))
++                        shutil.copy2(single_css_path, os.path.join(combined_dir, "style.css"))
++                        # Ensure style-common.css exists at root
++                        common_css_root = os.path.join(combined_dir, "style-common.css")
++                        if not os.path.exists(common_css_root):
++                            # copy from single or write minimal fallback
++                            sc_single = os.path.join(single_dir, "style-common.css")
++                            if os.path.exists(sc_single):
++                                shutil.copy2(sc_single, common_css_root)
++                    except Exception as e:
++                        print(f"[WARN] SINGLE_DOM root promote failed: {e}")
+                 except Exception as e:
+                     print(f"[WARN] SINGLE_DOM output failed: {e}")
+ 
+@@ -5646,8 +5774,10 @@ if SINGLE_HTML:
+             section_data = SP_SECTIONS[i] if i < len(SP_SECTIONS) else {}
+             sp_sections_html += generate_html_for_section(section_data, SP_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
+ 
+-    # Combined HTML (single DOM PC if DEVICE_MODE=pc or SP is absent)
+-    if (DEVICE_MODE == 'pc') or (not have_sp):
++    # Combined HTML/CSS writing (skip when SINGLE_DOM: already promoted single DOM to root)
++    if SINGLE_DOM:
++        pass
++    elif (DEVICE_MODE == 'pc') or (not have_sp):
+         combined_html = f'''<!DOCTYPE html>
+ <html lang="ja">
+ <head>
+@@ -5680,19 +5810,20 @@ if SINGLE_HTML:
+ </body>
+ </html>'''
+ 
+-    combined_html_file = os.path.join(combined_dir, "index.html")
+-    combined_css_file = os.path.join(combined_dir, "style.css")
+-    # Write HTML first
+-    with open(combined_html_file, "w", encoding="utf-8") as f:
+-        f.write(combined_html)
+-    # Build CSS with failsafe
+-    try:
+-        pc_css = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
+-        sp_css = ""
+-        if have_sp:
+-            sp_css_raw = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
+-            sp_css = "\n".join(["    " + line if line.strip() else line for line in sp_css_raw.splitlines()])
+-        combined_css = (
++    if not SINGLE_DOM:
++        combined_html_file = os.path.join(combined_dir, "index.html")
++        combined_css_file = os.path.join(combined_dir, "style.css")
++        # Write HTML first
++        with open(combined_html_file, "w", encoding="utf-8") as f:
++            f.write(combined_html)
++        # Build CSS with failsafe
++        try:
++            pc_css = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
++            sp_css = ""
++            if have_sp:
++                sp_css_raw = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
++                sp_css = "\n".join(["    " + line if line.strip() else line for line in sp_css_raw.splitlines()])
++            combined_css = (
+             "/* Device visibility */\n"
+             ".device-pc { display: block; }\n"
+             ".device-sp { display: none; }\n\n"
+@@ -5718,30 +5849,30 @@ if SINGLE_HTML:
+             "  .device-sp img { max-width: 100% !important; width: 100% !important; height: auto !important; display: block; }\n"
+             "  .device-sp [class^=\"n-\"], .device-sp [class*=\" n-\"] { height: auto !important; min-height: 0 !important; }\n"
+             "}\n"
+-        )
+-    except Exception as e:
+-        print(f"[WARN] CSS generation (combined) failed: {e}")
+-        combined_css = (
++            )
++        except Exception as e:
++            print(f"[WARN] CSS generation (combined) failed: {e}")
++            combined_css = (
+             "/* Fallback CSS */\n"
+             "html, body { margin:0; padding:0; overflow-x:hidden; }\n"
+             ".device-pc { display:block; } .device-sp { display:none; }\n"
+             "@media (max-width:768px){ .device-pc{display:none;} .device-sp{display:block;} }\n"
+             "img { max-width:100%; height:auto; display:block; }\n"
+-        )
+-    with open(combined_css_file, "w", encoding="utf-8") as f:
+-        f.write(combined_css)
+-    # Optional prune
+-    if PRUNE_UNUSED_CSS:
+-        try:
+-            pruned_path = os.path.join(combined_dir, "style.css")
+-            if prune_unused_css(combined_html_file, combined_css_file, pruned_path):
+-                print(f"[LOG] Combined CSS pruned -> {pruned_path}")
+-            else:
+-                print("[LOG] CSS prune skipped or failed; keeping original")
+-        except Exception as e:
+-            print(f"[WARN] CSS prune error: {e}")
+-    print(f"[LOG] Combined HTML saved: {combined_html_file}")
+-    print(f"[LOG] Combined CSS saved: {combined_css_file}")
++            )
++        with open(combined_css_file, "w", encoding="utf-8") as f:
++            f.write(combined_css)
++        # Optional prune
++        if PRUNE_UNUSED_CSS:
++            try:
++                pruned_path = os.path.join(combined_dir, "style.css")
++                if prune_unused_css(combined_html_file, combined_css_file, pruned_path):
++                    print(f"[LOG] Combined CSS pruned -> {pruned_path}")
++                else:
++                    print("[LOG] CSS prune skipped or failed; keeping original")
++            except Exception as e:
++                print(f"[WARN] CSS prune error: {e}")
++        print(f"[LOG] Combined HTML saved: {combined_html_file}")
++        print(f"[LOG] Combined CSS saved: {combined_css_file}")
+     # Write validation report
+     try:
+         build_node_style_report(combined_dir)
+diff --git a/figma_02_build_from_json.py b/figma_02_build_from_json.py
+index 6c08b9d..f0a0f1a 100644
+--- a/figma_02_build_from_json.py
++++ b/figma_02_build_from_json.py
+@@ -13,9 +13,36 @@ def main():
+     parser.add_argument("--use-images", action="store_true", help="Use images if available locally (fallback: env USE_IMAGES)")
+     parser.add_argument("--allow-online", action="store_true", help="Allow online access (image URLs, etc.) (fallback: env ALLOW_ONLINE=true)")
+     parser.add_argument("--device-mode", choices=["pc", "sp", "both"], help="Limit build target: pc | sp | both (fallback: env DEVICE_MODE)")
++    # Pipeline post steps
+     parser.add_argument("--unify-styles", action="store_true", help="Post-process: unify duplicate .n-* rules into utilities and annotate HTML (fallback: env POSTPROCESS_UNIFY=true)")
+     parser.add_argument("--common-utils", action="store_true", help="Post-process: inject common flex utilities and annotate HTML (fallback: env POSTPROCESS_COMMON=true)")
+     parser.add_argument("--annotate-components", action="store_true", help="Post-process: annotate generic components (card / section__card) (fallback: env POSTPROCESS_COMPONENTS=true)")
++
++    # Ops (optional, after pipeline)
++    parser.add_argument("--ops-assign-sections", action="store_true", help="Ops: assign section-01/02.. to <section> lacking keys (env POST_OPS_ASSIGN_SECTIONS=true)")
++    parser.add_argument("--ops-add-row-alias", action="store_true", help="Ops: add SECTION__row and extract row CSS to style-common.css (env POST_OPS_ADD_SECTION_ROW_ALIAS=true)")
++    parser.add_argument("--ops-card-alias", action="store_true", help="Ops: add SECTION__card alias to elements with card (env POST_OPS_ADD_SECTION_CARD_ALIAS=true)")
++    parser.add_argument("--ops-promote-shadow", action="store_true", help="Ops: promote child n-* shadow to SECTION__row-item (env POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM=true)")
++    parser.add_argument("--ops-ensure-style-order", action="store_true", help="Ops: ensure style-common.css is linked after style.css (env POST_OPS_ENSURE_STYLE_ORDER=true)")
++    parser.add_argument("--ops-escalate-alias-specificity", action="store_true", help="Ops: duplicate :where(.alias){..} as .alias{..} (env POST_OPS_ESCALATE_ALIAS_SPECIFICITY=true)")
++    parser.add_argument("--ops-mirror-n-selectors", action="store_true", help="Ops: mirror .n-* selectors in CSS to section-scoped aliases (env POST_OPS_MIRROR_N_SELECTORS=true)")
++    parser.add_argument("--ops-alias-graft", action="store_true", help="Ops: alias graft for residual n-* (append alias to HTML and comma-join CSS) (env POST_OPS_ALIAS_GRAFT=true)")
++    parser.add_argument("--ops-report-n-blockers", action="store_true", help="Ops: report blockers for dropping n-* (env POST_OPS_REPORT_N_BLOCKERS=true)")
++    parser.add_argument("--ops-canonicalize-bem", action="store_true", help="Ops: canonicalize BEM/alias variants (env POST_OPS_CANONICALIZE_BEM=true)")
++    parser.add_argument("--ops-alias-overrides", action="store_true", help="Ops: apply alias overrides mapping (env POST_OPS_ALIAS_OVERRIDES=true)")
++    parser.add_argument("--ops-alias-overrides-map", help="Path to alias overrides JSON (env POST_OPS_ALIAS_OVERRIDES_MAP)")
++    # Section breaks (report/apply)
++    parser.add_argument("--ops-propose-section-breaks", action="store_true", help="Ops: write section_breaks.json from HTML heuristics (env POST_OPS_PROPOSE_SECTION_BREAKS=true)")
++    parser.add_argument("--ops-apply-section-breaks", action="store_true", help="Ops: apply about-01/02… from section_breaks.json (env POST_OPS_APPLY_SECTION_BREAKS=true)")
++    parser.add_argument("--ops-section-break-reasons", help="Ops: reasons to pick for breaks (comma-separated). Default: heading,typography,background,rule (env POST_OPS_SECTION_BREAK_REASONS)")
++    parser.add_argument("--ops-section-break-enum-width", type=int, help="Ops: enum width for about-01 (default 2). Env: POST_OPS_SECTION_BREAK_ENUM_WIDTH")
++    parser.add_argument("--ops-neutralize-n-section", help="Ops: neutralize layout props in .n-* for a section key (e.g., about) (env POST_OPS_NEUTRALIZE_N_SECTION=<key>)")
++    parser.add_argument("--ops-drop-n-if-covered", action="store_true", help="Ops: drop n-* from HTML when fully covered by common CSS (env POST_OPS_DROP_N_IF_COVERED=true)")
++    parser.add_argument("--ops-drop-strict", action="store_true", help="Ops: use strict drop gate (no complex/media selectors) (env POST_OPS_DROP_N_STRICT=true)")
++    parser.add_argument("--ops-allow-media-layout", action="store_true", help="Ops: with strict drop, allow drop for layout-only rules inside @media (env POST_OPS_ALLOW_MEDIA_LAYOUT=true)")
++    parser.add_argument("--ops-allow-complex-layout", action="store_true", help="Ops: with strict drop, allow drop for layout-only complex selectors (env POST_OPS_ALLOW_COMPLEX_LAYOUT=true)")
++    parser.add_argument("--ops-backup", action="store_true", help="Ops: write .bak backups when modifying files (env POST_OPS_BACKUP=true)")
++    parser.add_argument("--ops-prune-unused-n-css", action="store_true", help="Ops: prune unused .n-* CSS rules/selectors after drop (env POST_OPS_PRUNE_UNUSED_N_CSS=true)")
+     args = parser.parse_args()
+ 
+     # Resolve inputs (CLI > env)
+@@ -30,6 +57,34 @@ def main():
+     post_common = args.common_utils or (os.getenv("POSTPROCESS_COMMON", "false").lower() == "true")
+     post_components = args.annotate_components or (os.getenv("POSTPROCESS_COMPONENTS", "false").lower() == "true")
+ 
++    # Ops flags
++    ops_assign = args.ops_assign_sections or (os.getenv("POST_OPS_ASSIGN_SECTIONS", "false").lower() == "true")
++    ops_row_alias = args.ops_add_row_alias or (os.getenv("POST_OPS_ADD_SECTION_ROW_ALIAS", "false").lower() == "true")
++    ops_card_alias = args.ops_card_alias or (os.getenv("POST_OPS_ADD_SECTION_CARD_ALIAS", "false").lower() == "true")
++    ops_promote_shadow = args.ops_promote_shadow or (os.getenv("POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM", "false").lower() == "true")
++    ops_style_order = args.ops_ensure_style_order or (os.getenv("POST_OPS_ENSURE_STYLE_ORDER", "false").lower() == "true")
++    ops_escalate_alias = args.ops_escalate_alias_specificity or (os.getenv("POST_OPS_ESCALATE_ALIAS_SPECIFICITY", "false").lower() == "true")
++    ops_mirror_selectors = args.ops_mirror_n_selectors or (os.getenv("POST_OPS_MIRROR_N_SELECTORS", "false").lower() == "true")
++    ops_alias_graft = args.ops_alias_graft or (os.getenv("POST_OPS_ALIAS_GRAFT", "false").lower() == "true")
++    ops_report_blockers = args.ops_report_n_blockers or (os.getenv("POST_OPS_REPORT_N_BLOCKERS", "false").lower() == "true")
++    ops_canon_bem = args.ops_canonicalize_bem or (os.getenv("POST_OPS_CANONICALIZE_BEM", "false").lower() == "true")
++    ops_alias_over = args.ops_alias_overrides or (os.getenv("POST_OPS_ALIAS_OVERRIDES", "false").lower() == "true")
++    ops_alias_over_map = args.ops_alias_overrides_map or os.getenv("POST_OPS_ALIAS_OVERRIDES_MAP")
++    ops_propose_breaks = args.ops_propose_section_breaks or (os.getenv("POST_OPS_PROPOSE_SECTION_BREAKS", "false").lower() == "true")
++    ops_apply_breaks = args.ops_apply_section_breaks or (os.getenv("POST_OPS_APPLY_SECTION_BREAKS", "false").lower() == "true")
++    ops_break_reasons = args.ops_section_break_reasons or os.getenv("POST_OPS_SECTION_BREAK_REASONS", "heading,typography,background,rule")
++    try:
++        ops_break_enum_width = int(args.ops_section_break_enum_width or (os.getenv("POST_OPS_SECTION_BREAK_ENUM_WIDTH", "2") or 2))
++    except Exception:
++        ops_break_enum_width = 2
++    ops_neutralize_section = args.ops_neutralize_n_section or os.getenv("POST_OPS_NEUTRALIZE_N_SECTION")
++    ops_drop_n = args.ops_drop_n_if_covered or (os.getenv("POST_OPS_DROP_N_IF_COVERED", "false").lower() == "true")
++    ops_drop_strict = args.ops_drop_strict or (os.getenv("POST_OPS_DROP_N_STRICT", "false").lower() == "true")
++    ops_allow_media_layout = args.ops_allow_media_layout or (os.getenv("POST_OPS_ALLOW_MEDIA_LAYOUT", "false").lower() == "true")
++    ops_allow_complex_layout = args.ops_allow_complex_layout or (os.getenv("POST_OPS_ALLOW_COMPLEX_LAYOUT", "false").lower() == "true")
++    ops_backup = args.ops_backup or (os.getenv("POST_OPS_BACKUP", "false").lower() == "true")
++    ops_prune_n_css = args.ops_prune_unused_n_css or (os.getenv("POST_OPS_PRUNE_UNUSED_N_CSS", "false").lower() == "true")
++
+     # Validate required
+     if not pc_json:
+         raise SystemExit("Missing PC JSON: pass --pc-json or set INPUT_JSON_FILE in .env")
+@@ -59,8 +114,15 @@ def main():
+     # Run the existing generator (executes at import time)
+     import fetch_figma_layout  # noqa: F401
+ 
+-    # Optional post-processing (class consolidation)
+-    if post_unify or post_common or post_components:
++    # Optional post-processing (class consolidation + ops)
++    do_any_post = any([
++        post_unify, post_common, post_components,
++        ops_assign, ops_row_alias, ops_card_alias, ops_promote_shadow,
++        ops_style_order, ops_escalate_alias, ops_mirror_selectors, ops_alias_graft, ops_report_blockers,
++        ops_propose_breaks, ops_apply_breaks, ops_canon_bem, ops_alias_over,
++        bool(ops_neutralize_section), ops_drop_n,
++    ])
++    if do_any_post:
+         import json as _json
+         import re as _re
+         import subprocess as _subprocess
+@@ -91,6 +153,7 @@ def main():
+                     break
+ 
+         if os.path.exists(index_html) and os.path.exists(style_css):
++            # Pipeline wrappers
+             if post_unify:
+                 try:
+                     print(f"[POST] Unify styles at: {root}")
+@@ -109,6 +172,132 @@ def main():
+                     _subprocess.run(["python3", "tools/pipeline/annotate_generic_components.py", "--root", root], check=False)
+                 except Exception as e:
+                     print(f"[POST] annotate_generic_components failed: {e}")
++
++            # Ops (safe, section-scoped) — order matters
++            def _maybe_backup_arg():
++                return ["--backup"] if ops_backup else []
++
++            if ops_assign:
++                try:
++                    print(f"[OPS] Assign section keys at: {root}")
++                    _subprocess.run(["python3", "tools/ops/assign_section_keys.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] assign_section_keys failed: {e}")
++
++            if ops_row_alias:
++                try:
++                    print(f"[OPS] Add section row alias at: {root}")
++                    _subprocess.run(["python3", "tools/ops/add_section_row_alias.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] add_section_row_alias failed: {e}")
++
++            if ops_card_alias:
++                try:
++                    print(f"[OPS] Add section card alias at: {root}")
++                    _subprocess.run(["python3", "tools/ops/add_section_card_alias.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] add_section_card_alias failed: {e}")
++
++            if ops_promote_shadow:
++                try:
++                    print(f"[OPS] Promote shadow to row item at: {root}")
++                    _subprocess.run(["python3", "tools/ops/promote_shadow_to_row_item.py", "--root", root], check=False)
++                except Exception as e:
++                    print(f"[OPS] promote_shadow_to_row_item failed: {e}")
++
++            if ops_style_order:
++                try:
++                    print(f"[OPS] Ensure style-common.css order at: {root}")
++                    _subprocess.run(["python3", "tools/ops/ensure_style_link_order.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] ensure_style_link_order failed: {e}")
++
++            if ops_escalate_alias:
++                try:
++                    print(f"[OPS] Escalate alias specificity at: {root}")
++                    _subprocess.run(["python3", "tools/ops/escalate_alias_specificity.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] escalate_alias_specificity failed: {e}")
++
++            # Section break proposal/apply
++            if ops_propose_breaks:
++                try:
++                    print(f"[OPS] Propose section breaks at: {root}")
++                    _subprocess.run(["python3", "tools/propose_section_breaks.py", "--root", root], check=False)
++                except Exception as e:
++                    print(f"[OPS] propose_section_breaks failed: {e}")
++
++            if ops_apply_breaks:
++                try:
++                    print(f"[OPS] Apply section breaks at: {root}")
++                    _subprocess.run(["python3", "tools/ops/apply_section_breaks.py", "--root", root, "--reasons", ops_break_reasons, "--enum-width", str(ops_break_enum_width), *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] apply_section_breaks failed: {e}")
++
++            if ops_alias_graft:
++                try:
++                    print(f"[OPS] Alias graft for residual n-* at: {root}")
++                    _subprocess.run(["python3", "tools/ops/alias_graft_for_residual_n.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] alias_graft_for_residual_n failed: {e}")
++
++            # Run mirror after alias graft so grafted aliases are available for mapping
++            if ops_mirror_selectors:
++                try:
++                    print(f"[OPS] Mirror .n-* selectors to aliases at: {root}")
++                    _subprocess.run(["python3", "tools/ops/mirror_n_selectors_to_alias.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] mirror_n_selectors_to_alias failed: {e}")
++
++            if ops_canon_bem:
++                try:
++                    print(f"[OPS] Canonicalize BEM variants at: {root}")
++                    _subprocess.run(["python3", "tools/canonicalize_bem_variants.py", "--root", root, "--backup"], check=False)
++                except Exception as e:
++                    print(f"[OPS] canonicalize_bem_variants failed: {e}")
++
++            if ops_alias_over and ops_alias_over_map:
++                try:
++                    print(f"[OPS] Apply alias overrides at: {root}")
++                    _subprocess.run(["python3", "tools/ops/alias_overrides_apply.py", "--root", root, "--map", ops_alias_over_map, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] alias_overrides_apply failed: {e}")
++
++            if ops_report_blockers:
++                try:
++                    print(f"[OPS] Report n-* drop blockers at: {root}")
++                    _subprocess.run(["python3", "tools/ops/report_n_drop_blockers.py", "--root", root], check=False)
++                except Exception as e:
++                    print(f"[OPS] report_n_drop_blockers failed: {e}")
++
++            if ops_neutralize_section:
++                try:
++                    print(f"[OPS] Neutralize n-* layout in section='{ops_neutralize_section}' at: {root}")
++                    _subprocess.run(["python3", "tools/ops/neutralize_n_layout_in_section.py", "--root", root, "--section", ops_neutralize_section, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] neutralize_n_layout_in_section failed: {e}")
++
++            if ops_drop_n:
++                try:
++                    print(f"[OPS] Drop n-* if covered at: {root}")
++                    cmd = ["python3", "tools/ops/drop_n_if_covered.py", "--root", root]
++                    if ops_drop_strict:
++                        cmd.append("--strict")
++                        if ops_allow_media_layout:
++                            cmd.append("--allow-media-layout")
++                        if ops_allow_complex_layout:
++                            cmd.append("--allow-complex-layout")
++                    cmd += _maybe_backup_arg()
++                    _subprocess.run(cmd, check=False)
++                except Exception as e:
++                    print(f"[OPS] drop_n_if_covered failed: {e}")
++
++            if ops_prune_n_css:
++                try:
++                    print(f"[OPS] Prune unused n-* CSS rules at: {root}")
++                    _subprocess.run(["python3", "tools/ops/prune_unused_n_css_rules.py", "--root", root, *_maybe_backup_arg()], check=False)
++                except Exception as e:
++                    print(f"[OPS] prune_unused_n_css_rules failed: {e}")
+         else:
+             print(f"[POST] Skip post-processing: index.html/style.css not found under {root}")
+ 
+diff --git a/tools/drop_n_if_covered.py b/tools/drop_n_if_covered.py
+index 1982ae9..887c0d1 100644
+--- a/tools/drop_n_if_covered.py
++++ b/tools/drop_n_if_covered.py
+@@ -2,9 +2,19 @@
+ from __future__ import annotations
+ 
+ import argparse
++import os
+ import re
+ from pathlib import Path
+ 
++# Properties we consider "layout" for the purpose of safe drop
++LAYOUT_PROPS = {
++    'display','flex-direction','gap','justify-content','align-items','flex-wrap',
++    'align-self','min-width','min-height','max-width','max-height','width','height',
++    # spacing we partially normalize
++    'padding','padding-top','padding-right','padding-bottom','padding-left',
++    'overflow'
++}
++
+ 
+ def parse_css_class_props(css_text: str) -> dict[str, dict[str, str]]:
+     cmap: dict[str, dict[str, str]] = {}
+@@ -44,6 +54,140 @@ def parse_css_class_props(css_text: str) -> dict[str, dict[str, str]]:
+     return cmap
+ 
+ 
++def scan_n_class_rules(css_text: str) -> dict[str, dict[str, bool]]:
++    """Scan CSS to determine for each .n-* whether it appears in complex/media selectors
++    and whether any rule body contains non-layout properties.
++    Returns: n_cls -> { 'complex': bool, 'media': bool, 'has_non_layout': bool }
++    """
++    css = re.sub(r"/\*.*?\*/", "", css_text or "", flags=re.S)
++    usage: dict[str, dict[str, bool]] = {}
++    i = 0
++    n = len(css)
++    stack: list[str] = []  # track @media nesting
++    last = 0
++    while i < n:
++        j_open = css.find('{', i)
++        j_close = css.find('}', i)
++        if j_open == -1 and j_close == -1:
++            break
++        if j_close != -1 and (j_open == -1 or j_close < j_open):
++            if stack:
++                stack.pop()
++            i = j_close + 1
++            last = i
++            continue
++        header = css[last:j_open]
++        hdr = header.strip()
++        if hdr.startswith('@'):
++            if hdr.lower().startswith('@media'):
++                stack.append('media')
++            else:
++                stack.append('other')
++        else:
++            # selector rule
++            inside_media = any(s == 'media' for s in stack)
++            # read body
++            k = j_open + 1
++            depth = 1
++            while k < n and depth > 0:
++                if css[k] == '{':
++                    depth += 1
++                elif css[k] == '}':
++                    depth -= 1
++                k += 1
++            body = css[j_open+1:k-1]
++            props = set()
++            for part in body.split(';'):
++                if ':' not in part:
++                    continue
++                key = part.split(':',1)[0].strip().lower()
++                if key:
++                    props.add(key)
++            # find .n-* mentions in header
++            ns = set()
++            for m in re.finditer(r"\.n-([a-zA-Z0-9_-]+)", hdr):
++                ns.add('n-' + m.group(1))
++            for m in re.finditer(r":where\(\.(n-[a-zA-Z0-9_-]+)\)", hdr):
++                ns.add(m.group(1))
++            if ns:
++                sels = [s.strip() for s in hdr.split(',') if s.strip()]
++                for ncls in ns:
++                    info = usage.setdefault(ncls, {'complex': False, 'media': False, 'has_non_layout': False})
++                    if inside_media:
++                        info['media'] = True
++                    # complexity: any selector that mentions ncls but is not exactly ".ncls" or ":where(.ncls)"
++                    for s in sels:
++                        if ('.' + ncls) in s or (f':where(.{ncls})' in s):
++                            simple_ok = (s == ('.' + ncls)) or (s == (f':where(.{ncls})'))
++                            if not simple_ok:
++                                info['complex'] = True
++                                break
++                    # non-layout detection
++                    if any((p not in LAYOUT_PROPS) for p in props):
++                        info['has_non_layout'] = True
++        i = j_open + 1
++        last = i
++    return usage
++
++
++def analyze_css_usage(css_text: str) -> dict[str, dict[str, bool]]:
++    """Analyze how .n-* classes are used in CSS selectors.
++    Returns map: n_cls -> {'complex': bool, 'media': bool}
++    - complex: used in a selector that is not exactly '.n-xxx' or ':where(.n-xxx)'
++    - media: appears inside any @media block
++    Conservative parsing; aims for safety over completeness.
++    """
++    # strip comments
++    css = re.sub(r"/\*.*?\*/", "", css_text or "", flags=re.S)
++    usage: dict[str, dict[str, bool]] = {}
++
++    i = 0
++    n = len(css)
++    stack: list[str] = []  # values: 'media' | 'other'
++    last = 0
++    while i < n:
++        j_open = css.find('{', i)
++        j_close = css.find('}', i)
++        if j_open == -1 and j_close == -1:
++            break
++        if j_close != -1 and (j_open == -1 or j_close < j_open):
++            # close current block
++            if stack:
++                stack.pop()
++            i = j_close + 1
++            last = i
++            continue
++        # found an opening brace
++        header = css[last:j_open]
++        hdr = header.strip()
++        if hdr.startswith('@'):
++            if hdr.lower().startswith('@media'):
++                stack.append('media')
++            else:
++                stack.append('other')
++        else:
++            # selector header
++            inside_media = any(s == 'media' for s in stack)
++            # find any .n- tokens in header
++            for m in re.finditer(r"\.n-([a-zA-Z0-9_-]+)", hdr):
++                ncls = 'n-' + m.group(1)
++                info = usage.setdefault(ncls, {'complex': False, 'media': False})
++                if inside_media:
++                    info['media'] = True
++                # check complexity per selector in list
++                sels = [s.strip() for s in hdr.split(',') if s.strip()]
++                for s in sels:
++                    if f'.{ncls}' not in s and f':where(.{ncls})' not in s:
++                        continue
++                    simple_ok = (s == f'.{ncls}') or (s == f':where(.{ncls})')
++                    if not simple_ok:
++                        info['complex'] = True
++                        break
++        i = j_open + 1
++        last = i
++    return usage
++
++
+ def coverage_from_tokens(tokens: list[str]) -> dict[str, str | tuple[str, str, str, str]]:
+     cov: dict[str, str | tuple[str, str, str, str]] = {}
+     for t in tokens:
+@@ -164,6 +308,9 @@ def main():
+     ap = argparse.ArgumentParser(description='Drop n-* classes from HTML when all their CSS props are covered by utilities/tokens present on the element')
+     ap.add_argument('--root', required=True)
+     ap.add_argument('--backup', action='store_true')
++    ap.add_argument('--allow-media-layout', action='store_true', help='Allow drop even if used inside @media when all rules are layout-only')
++    ap.add_argument('--allow-complex-layout', action='store_true', help='Allow drop even if used in complex selectors when all rules are layout-only')
++    ap.add_argument('--strict', action='store_true', help='Only drop when .n-* is not used in complex/media selectors (safe mode)')
+     args = ap.parse_args()
+ 
+     root = Path(args.root)
+@@ -179,9 +326,15 @@ def main():
+             d = cmap.setdefault(k, {})
+             d.update(v)
+ 
+-    tag_re = re.compile(r"<(div|section|nav|ul|li|header|footer|article)([^>]*)>", re.I)
++    tag_re = re.compile(r"<([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>", re.I)
+     class_re = re.compile(r'class=\"([^\"]+)\"')
+ 
++    # Strict usage analysis
++    usage_map = {}
++    if args.strict:
++        # Use enhanced scan that also marks non-layout presence
++        usage_map = scan_n_class_rules(css_text + "\n" + common_text)
++
+     files_changed = 0
+     removed_total = 0
+     for html in root.rglob('*.html'):
+@@ -214,16 +367,32 @@ def main():
+                                 cov['padding-top'] = nums[0]; cov['padding-right'] = nums[1]; cov['padding-bottom'] = nums[2]; cov['padding-left'] = nums[3]
+                             continue
+                         cov[k] = v
+-            # Card visuals: treat as wildcard-covered to avoid over-constraining drop
+-            if any((c == 'card') or c.endswith('__card') for c in classes):
+-                cov['background-color'] = '*'
+-                cov['box-shadow'] = '*'
++            # Visuals should not be considered covered unless explicitly present in other classes.
++            # Optionally allow wildcard coverage for cards when DROP_N_CARD_VISUAL_WILDCARD=true.
++            if os.getenv('DROP_N_CARD_VISUAL_WILDCARD', 'false').lower() == 'true':
++                if any((c == 'card') or c.endswith('__card') for c in classes):
++                    cov['background-color'] = '*'
++                    cov['box-shadow'] = '*'
+             to_remove = []
+             for c in classes:
+-                if c.startswith('n-'):
+-                    kv = cmap.get(c)
+-                    if kv and covered_all(kv, cov):
+-                        to_remove.append(c)
++                if not c.startswith('n-'):
++                    continue
++                # Strict mode: ensure safe usage
++                if args.strict:
++                    info = usage_map.get(c) or {'complex': True, 'media': True, 'has_non_layout': True}
++                    complex_block = info.get('complex')
++                    media_block = info.get('media')
++                    # Relax blocks if only layout props are used and flags allow
++                    if not info.get('has_non_layout', True):
++                        if args.allow_complex_layout:
++                            complex_block = False
++                        if args.allow_media_layout:
++                            media_block = False
++                    if complex_block or media_block:
++                        continue
++                kv = cmap.get(c)
++                if kv and covered_all(kv, cov):
++                    to_remove.append(c)
+             if not to_remove:
+                 continue
+             kept = [c for c in classes if c not in to_remove]
+diff --git a/tools/postprocess_dedupe.py b/tools/postprocess_dedupe.py
+index 82ae7bc..8ca1903 100644
+--- a/tools/postprocess_dedupe.py
++++ b/tools/postprocess_dedupe.py
+@@ -119,11 +119,12 @@ def util_classes_for(props: dict):
+     if fw:
+         token = fw.replace(" ", "-")
+         classes.append(f"fw-{token}")
+-    # align-self
+-    als = props.get("align-self")
+-    if als:
+-        token = als.replace(" ", "-")
+-        classes.append(f"as-{token}")
++    # align-self (optional; disabled by default to avoid misapplication on parents)
++    if os.getenv('INJECT_ALIGN_SELF', 'false').lower() == 'true':
++        als = props.get("align-self")
++        if als:
++            token = als.replace(" ", "-")
++            classes.append(f"as-{token}")
+     # width/height limited utilities
+     w = (props.get("width") or "").strip().lower()
+     if w in ("auto", "100%"):
+@@ -468,6 +469,116 @@ def inject_link_and_classes(html_path: Path, class_prop_map: dict, covered_props
+         html_path.write_text(text, encoding="utf-8")
+ 
+ 
++def _png_width_from_file(root: Path, src: str) -> int | None:
++    try:
++        p = (root / src).resolve()
++        with open(p, 'rb') as f:
++            sig = f.read(8)
++            if sig != b"\x89PNG\r\n\x1a\n":
++                return None
++            _ = f.read(8)  # len + IHDR
++            data = f.read(13)
++            if len(data) == 13:
++                return int.from_bytes(data[0:4], 'big')
++    except Exception:
++        return None
++    return None
++
++
++def annotate_basis_for_image_text_rows(html_path: Path, backup=False):
++    """Annotate basis-<n> on image child for 2-col fx-row when columns are not equal.
++    Heuristic: detect fx-row with exactly two direct children; if one child subtree contains <img src="...">
++    and the inferred image width differs by >= 25% from its sibling content width estimate, add basis-N to that child.
++    """
++    try:
++        text = html_path.read_text(encoding='utf-8', errors='ignore')
++    except Exception:
++        return
++    original = text
++    lines = text.splitlines()
++    open_re = re.compile(r"^(\s*)<div[^>]*\bclass=\"([^\"]*\bfx-row\b[^\"]*)\"[^>]*>")
++    child_re = re.compile(r"^(\s*)<([a-zA-Z]+)\b([^>]*)>\s*$")
++    class_re = re.compile(r'class=\"([^\"]+)\"')
++    img_re = re.compile(r"<img[^>]*\bsrc=\"([^\"]+)\"", re.I)
++    close_re_tpl = r"^{indent}</div>\s*$"
++    changed = False
++    i = 0
++    root = html_path.parent
++    while i < len(lines):
++        m = open_re.match(lines[i])
++        if not m:
++            i += 1
++            continue
++        indent = m.group(1)
++        close_re = re.compile(close_re_tpl.format(indent=re.escape(indent)))
++        # collect exactly two direct children indices
++        child_idxs = []
++        j = i + 1
++        while j < len(lines) and not close_re.match(lines[j]):
++            cm = child_re.match(lines[j])
++            if cm and cm.group(1) == indent + '  ':
++                child_idxs.append(j)
++                if len(child_idxs) == 2:
++                    pass
++            j += 1
++        if len(child_idxs) != 2:
++            i = j if j > i else i + 1
++            continue
++        seg0 = "\n".join(lines[child_idxs[0]: (child_idxs[1])])
++        seg1 = "\n".join(lines[child_idxs[1]: j])
++        def _estimate(seg: str) -> tuple[bool, int]:
++            mimg = img_re.search(seg)
++            if not mimg:
++                # fallback: length of text content as weight
++                content = re.sub(r"<[^>]+>", "", seg)
++                return False, max(1, len(content.strip()))
++            src = mimg.group(1)
++            w = _png_width_from_file(root, src) or 0
++            return True, max(1, w)
++        is_img0, w0 = _estimate(seg0)
++        is_img1, w1 = _estimate(seg1)
++        # identify which side is image-dominant
++        img_side = 0 if (is_img0 and not is_img1) else (1 if (is_img1 and not is_img0) else -1)
++        if img_side == -1:
++            i = j if j > i else i + 1
++            continue
++        big = max(w0, w1); small = min(w0, w1)
++        if small <= 0:
++            i = j if j > i else i + 1
++            continue
++        ratio = big / small
++        if ratio < 1.25:
++            i = j if j > i else i + 1
++            continue
++        # annotate basis-N on the image child
++        idx = child_idxs[img_side]
++        cm = child_re.match(lines[idx])
++        if not cm:
++            i = j if j > i else i + 1
++            continue
++        attrs = cm.group(3)
++        mcls = class_re.search(attrs)
++        if not mcls:
++            i = j if j > i else i + 1
++            continue
++        cls = mcls.group(1)
++        # quantize width to nearest 8px to avoid noisy tokens
++        def _q8(n: int) -> int:
++            return int(round(n / 8.0) * 8)
++        token = f"basis-{_q8(big)}"
++        if token not in cls.split():
++            new_cls = cls + ' ' + token
++            new_attrs = attrs[:mcls.start()] + f'class="{new_cls}"' + attrs[mcls.end():]
++            lines[idx] = lines[idx].replace(attrs, new_attrs, 1)
++            changed = True
++        i = j if j > i else i + 1
++    if changed:
++        new_text = "\n".join(lines) + "\n"
++        if backup:
++            html_path.with_suffix(html_path.suffix + ".basis.bak").write_text(original, encoding='utf-8')
++        html_path.write_text(new_text, encoding='utf-8')
++
++
+ def add_two_col_role_classes(html_path: Path, backup=False):
+     """Add .col-first / .col-second to direct children of .layout-2col containers.
+     Heuristic based on first two child opening tags before the matching close at same indent.
+@@ -1669,13 +1780,14 @@ def main():
+     # Also include any utility tokens explicitly present in HTML classes
+     needed_utils.update(collect_util_tokens_from_html(root))
+ 
+-    # Always (re)write style-common.css with baseline rules (eq-cols, responsive, helpers)
+-    # We avoid injecting classes to HTML unless --inject-css is set.
++    # Always prepare a first pass of style-common.css with baseline rules (fx/g/ai/jc/fw/eq-cols)
++    # A second pass will be written after HTML edits to include any newly annotated tokens (e.g., basis-*)
+     write_style_common(root, needed_utils)
+     css_class_map = parse_css_class_props(root / "style.css", set(FLEX_PROPS)) if args.inject_css else {}
+ 
+     applied_classes = set()
+     eq_cols_n_classes: set[str] = set()
++    enable_auto_eq = (os.getenv('ENABLE_AUTO_EQ_COLS','false').lower() == 'true')
+     for hp in html_files:
+         # ensure fullbleed wrapper structure first
+         ensure_fullbleed_content_wrapper(hp, backup=args.backup)
+@@ -1684,12 +1796,16 @@ def main():
+         # If injecting, add link and utilities; otherwise skip
+         if args.inject_css:
+             inject_link_and_classes(hp, css_class_map, set(FLEX_PROPS), backup=args.backup)
+-        # add eq-cols for fx-row parents with 2–4 children (layout-driven equalization)
+-        add_eq_cols_to_rows(hp, backup=args.backup)
+-        # normalize equalized rows to drop redundant child height/self-alignment; enforce ai-stretch on parent
+-        normalize_eq_cols_rows(hp, backup=args.backup)
+-        # unify eq-cols children by promoting common tokens to .row-item and dropping covered tokens
+-        unify_eq_cols_children(hp, backup=args.backup, promote_visuals=(args.promote_visuals or (os.getenv('PROMOTE_VISUALS','false').lower()=='true')))
++        # Basis annotation for image+text 2-col rows where columns are not equal
++        annotate_basis_for_image_text_rows(hp, backup=args.backup)
++        # Optional: add/normalize eq-cols only when explicitly enabled
++        if enable_auto_eq:
++            # add eq-cols for fx-row parents with 2–4 children (layout-driven equalization)
++            add_eq_cols_to_rows(hp, backup=args.backup)
++            # normalize equalized rows to drop redundant child height/self-alignment; enforce ai-stretch on parent
++            normalize_eq_cols_rows(hp, backup=args.backup)
++            # unify eq-cols children by promoting common tokens to .row-item and dropping covered tokens
++            unify_eq_cols_children(hp, backup=args.backup, promote_visuals=(args.promote_visuals or (os.getenv('PROMOTE_VISUALS','false').lower()=='true')))
+         # optionally consolidate non-eq fx-row siblings
+         if args.consolidate_non_eq or (os.getenv('CONSOLIDATE_NON_EQ','false').lower()=='true'):
+             unify_non_eq_row_children(hp, backup=args.backup)
+@@ -1703,7 +1819,8 @@ def main():
+         # collect n-* used under eq-cols for CSS min-height neutralization
+         eq_cols_n_classes |= collect_eq_cols_n_classes(root)
+     # drop min-height for those n-* in CSS (safe under eq-cols)
+-    comment_out_min_height_for(root, eq_cols_n_classes, backup=args.backup)
++    if enable_auto_eq:
++        comment_out_min_height_for(root, eq_cols_n_classes, backup=args.backup)
+ 
+     # collect n- classes present for optional css commenting
+     for hp in html_files:
+@@ -1739,6 +1856,14 @@ def main():
+         for hp in html_files:
+             add_data_mh_groups(hp, backup=args.backup)
+ 
++    # After HTML edits, recompute utilities present in HTML and ensure style-common.css
++    # contains any newly annotated tokens (e.g., basis-*)
++    try:
++        needed_utils.update(collect_util_tokens_from_html(root))
++        write_style_common(root, needed_utils)
++    except Exception:
++        pass
++
+ 
+ if __name__ == "__main__":
+     main()

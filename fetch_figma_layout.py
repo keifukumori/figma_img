@@ -50,6 +50,8 @@ INCLUDE_ALLOWLIST_IDS = {s.strip() for s in os.getenv("INCLUDE_ALLOWLIST_IDS", "
 # - TEXT_TOKEN_MODE: off | role | section_local
 TEXT_TOKEN_MODE = (os.getenv("TEXT_TOKEN_MODE", "off") or "off").lower()
 TEXT_ROLE_MODE = (TEXT_TOKEN_MODE == 'role') or (os.getenv("TEXT_ROLE_MODE", "off").lower() in ("on", "true", "1"))
+# Control whether fallback text-size-* classes include color declarations
+FALLBACK_TEXT_CLASS_INCLUDE_COLOR = (os.getenv("FALLBACK_TEXT_CLASS_INCLUDE_COLOR", "true").lower() == "true")
 # Section-local token config (used when TEXT_TOKEN_MODE=section_local)
 TEXT_LOCAL_BASE = os.getenv("TEXT_LOCAL_BASE", "text")
 TEXT_LOCAL_NOTE_BASE = os.getenv("TEXT_LOCAL_NOTE_BASE", "note")
@@ -540,6 +542,16 @@ try:
     HPAD_WRAPPER_MIN_WIDTH_RATIO = float(os.getenv("HPAD_WRAPPER_MIN_WIDTH_RATIO", "0.9") or 0.9)
 except Exception:
     HPAD_WRAPPER_MIN_WIDTH_RATIO = 0.9
+
+# Debug instrumentation for Auto Layout
+DEBUG_AL = (os.getenv("DEBUG_AL", "false").lower() == "true")
+
+# Position-based row grouping controls
+ALLOW_POSITION_GROUPING = (os.getenv("ALLOW_POSITION_GROUPING", "true").lower() == "true")
+try:
+    POSITION_Y_OVERLAP_THRESHOLD = float(os.getenv("POSITION_Y_OVERLAP_THRESHOLD", "0.6") or 0.6)
+except Exception:
+    POSITION_Y_OVERLAP_THRESHOLD = 0.6
 
 # Text-exact exclusion tokens (comma-separated). If a TEXT node's content exactly matches
 # one of these tokens (after simple normalization), that TEXT node is excluded.
@@ -1504,6 +1516,8 @@ def analyze_layout_structure(element):
 
     layout_mode = element.get("layoutMode", "NONE")
 
+    # (reverted) Do not enrich with justify/align/wrap at this stage
+
     # 1) レイアウトグリッドの列数
     grid_info = None
     for grid in element.get("layoutGrids", []) or []:
@@ -1583,6 +1597,33 @@ def analyze_layout_structure(element):
             info["type"] = "multi-column"
         else:
             info["type"] = "single"
+        # Attach basic Auto Layout intent for token generation (gap/justify/align/wrap)
+        try:
+            gap = int(element.get("itemSpacing", 0) or 0)
+            if gap > 0:
+                info["gap"] = gap
+        except Exception:
+            pass
+        def _map_align(v):
+            if not v:
+                return None
+            m = str(v).upper()
+            return {
+                "MIN": "flex-start",
+                "CENTER": "center",
+                "MAX": "flex-end",
+                "SPACE_BETWEEN": "space-between",
+                "SPACE_AROUND": "space-around",
+                "STRETCH": "stretch",
+            }.get(m)
+        j = _map_align(element.get("primaryAxisAlignItems"))
+        a = _map_align(element.get("counterAxisAlignItems"))
+        if j:
+            info["justify"] = j
+        if a:
+            info["align"] = a
+        if str(element.get("layoutWrap") or "").upper() == "WRAP":
+            info["wrap"] = True
     else:
         info = None
 
@@ -1598,19 +1639,20 @@ def analyze_layout_structure(element):
     used = [False] * len(child_positions)
     # ソートして貪欲に行を作る
     order = sorted(range(len(child_positions)), key=lambda i: child_positions[i]["y"])
-    for idx in order:
-        if used[idx]:
-            continue
-        row = [child_positions[idx]]
-        used[idx] = True
-        for j in order:
-            if used[j]:
+    if ALLOW_POSITION_GROUPING:
+        for idx in order:
+            if used[idx]:
                 continue
-            if y_overlap(child_positions[idx], child_positions[j]) >= 0.6:
-                row.append(child_positions[j])
-                used[j] = True
-        if len(row) > 1:
-            rows.append(sorted(row, key=lambda x: x["x"]))
+            row = [child_positions[idx]]
+            used[idx] = True
+            for j in order:
+                if used[j]:
+                    continue
+                if y_overlap(child_positions[idx], child_positions[j]) >= POSITION_Y_OVERLAP_THRESHOLD:
+                    row.append(child_positions[j])
+                    used[j] = True
+            if len(row) > 1:
+                rows.append(sorted(row, key=lambda x: x["x"]))
 
     if rows:
         max_columns = max(len(r) for r in rows)
@@ -1846,6 +1888,10 @@ def generate_layout_class(layout_info):
         ai = _map_align((layout_info or {}).get("align"), 'ai')
         if ai:
             classes.append(ai)
+
+        # wrap
+        if (layout_info or {}).get("wrap"):
+            classes.append("fw-wrap")
 
         return " ".join(classes)
     except Exception:
@@ -2794,7 +2840,14 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
     
     # テキスト要素
     if element_type == "TEXT":
-        text_content = escape(element.get("characters", "テキスト"))
+        # Drop empty/whitespace-only text nodes to avoid stray <p> breaking DOM nesting
+        raw_chars = element.get("characters")
+        try:
+            if raw_chars is None or not str(raw_chars).strip():
+                return ""
+        except Exception:
+            return ""
+        text_content = escape(str(raw_chars))
         
         # フォント情報の取得（Figmaスタイル優先）
         style_info = extract_text_styles(element, layout_structure.get("figma_styles"))
@@ -3123,7 +3176,11 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
 
         # Auto Layoutをinline styleで反映
         inline_style = map_auto_layout_inline_styles(element)
-        style_parts = [inline_style] if inline_style else []
+        # Split inline_style into individual props so filtering works per property
+        if inline_style:
+            style_parts = [p.strip() for p in inline_style.split(';') if p.strip()]
+        else:
+            style_parts = []
         
         # Auto Layout環境での自動サイズ調整検出を強化
         sizing_primary = (element.get("primaryAxisSizingMode") or "").upper()
@@ -3254,8 +3311,14 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         if layout_class:
             # layout_class may contain multiple utility tokens separated by spaces
             all_classes.extend([t for t in layout_class.split() if t])
-        if node_class and has_node_style:
-            all_classes.append(node_class)
+        # Always attach the node-specific class when styles were collected for this node
+        # Some child auto-layout rules are added earlier (via add_node_styles) without local style_parts here.
+        try:
+            if node_class and (has_node_style or (node_safe in (collected_node_styles or {}))):
+                all_classes.append(node_class)
+        except Exception:
+            if node_class and has_node_style:
+                all_classes.append(node_class)
         # 固定幅クラス検出とfixed-widthクラス追加
         all_classes = add_fixed_width_class_if_needed(all_classes)
         # 追加: クラスの重複を順序維持で除去（fx-col が二重などを防止）
@@ -3370,7 +3433,26 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                             final_class = f"{final_class} {alias}"
             except Exception:
                 pass
-            html = f'{indent}<div class="{final_class}">\n'
+            # Debug attributes to inspect Auto Layout at runtime
+            debug_attrs = ''
+            if DEBUG_AL and isinstance(layout_info, dict):
+                try:
+                    dbg = []
+                    if layout_info.get('layout_mode'):
+                        dbg.append(f'data-al-mode="{layout_info.get("layout_mode")}"')
+                    if layout_info.get('gap') is not None:
+                        dbg.append(f'data-gap="{layout_info.get("gap")}"')
+                    if layout_info.get('justify'):
+                        dbg.append(f'data-justify="{layout_info.get("justify")}"')
+                    if layout_info.get('align'):
+                        dbg.append(f'data-align="{layout_info.get("align")}"')
+                    if layout_info.get('wrap'):
+                        dbg.append('data-wrap="true"')
+                    if dbg:
+                        debug_attrs = ' ' + ' '.join(dbg)
+                except Exception:
+                    pass
+            html = f'{indent}<div class="{final_class}"{debug_attrs}>\n'
             content_indent = indent + "  "
             closing_html = f'{indent}</div>\n'
 
@@ -4229,7 +4311,8 @@ img {{
     text-align: {style_info["text_align"]};
 '''
         # Figmaスタイルが併用される要素は、こちらでは色を出さずfigma-style側に委譲
-        if not style_info.get("figma_style_name"):
+        # さらに、フォールバックの text-size-* に color を含めないオプションを用意
+        if (not style_info.get("figma_style_name")) and FALLBACK_TEXT_CLASS_INCLUDE_COLOR and style_info.get("color"):
             css += f'''    color: {style_info["color"]};
 '''
         if style_info.get("text_decoration"):
@@ -4316,26 +4399,48 @@ img {{
     node_styles = node_styles or {}
     for node_id, props in node_styles.items():
         safe_id = css_safe_identifier(node_id)
-        props_str = ";\n    ".join(props)
-        selectors = [f'.n-{safe_id}']
+        # Always emit full props for the node-specific .n-* selector
+        props_str_n = ";\n    ".join(props)
+        css += f'''.n-{safe_id} {{
+    {props_str_n};
+}}
+
+'''
+        # Optionally emit an alias rule with filtered props (no text color)
         try:
             if N_CLASS_ALIAS_MODE == 'add':
                 alias = NODE_ALIAS_CANDIDATE.get(safe_id)
                 if alias:
                     unique = (ALIAS_FREQ.get(alias, 0) == 1)
-                    if N_CLASS_ALIAS_DROP_N_UNIQUE and unique:
-                        selectors = [f'.{alias}']
-                    else:
-                        if (not N_CLASS_ALIAS_UNIQUE_ONLY) or unique:
-                            selectors.append(f'.{alias}')
-        except Exception:
-            pass
-        sel = ", ".join(selectors)
-        css += f'''{sel} {{
-    {props_str};
+                    # Keep alias CSS visual-only to avoid layout bleed
+                    safe_visual_prefixes = (
+                        'background', 'border', 'box-shadow', 'filter', 'backdrop-filter', 'mix-blend-mode', 'aspect-ratio'
+                    )
+                    alias_props = []
+                    for p in props:
+                        sp = str(p).strip().lower()
+                        if sp.startswith('color:'):
+                            continue
+                        if any(sp.startswith(pref) for pref in safe_visual_prefixes):
+                            alias_props.append(p)
+                    # For structural aliases, allow inner padding to live on alias for consistency
+                    try:
+                        if isinstance(alias, str) and (alias.endswith('__row-item') or alias.endswith('__card')):
+                            for p in props:
+                                sp = str(p).strip().lower()
+                                if sp.startswith('padding'):
+                                    alias_props.append(p)
+                    except Exception:
+                        pass
+                    if alias_props:
+                        props_str_alias = ";\n    ".join(alias_props)
+                        css += f'''.{alias} {{
+    {props_str_alias};
 }}
 
 '''
+        except Exception:
+            pass
 
     # Custom class styles (wrapper backgrounds, etc.)
     if CUSTOM_CLASS_STYLES:
@@ -4889,6 +4994,11 @@ def add_node_styles(node_id, style_props):
                 return True
             if p.startswith('padding'):
                 return True
+            # Allow essential flexbox layout intent for containers
+            if p.startswith('display:'):
+                return True
+            if p.startswith(('flex:', 'flex-direction', 'justify-content', 'align-items', 'align-self', 'flex-wrap', 'gap:')):
+                return True
             # Preserve intrinsic sizes for image/line nodes to avoid collapse
             if kind in ('image','line') and (
                 p.startswith('width') or p.startswith('height') or p.startswith('min-width') or p.startswith('min-height') or p.startswith('max-width') or p.startswith('max-height')
@@ -4897,11 +5007,25 @@ def add_node_styles(node_id, style_props):
             # Otherwise block layout/dimension props on non-text nodes
             return False
         # Otherwise allow a broader set including layout
+        # Always allow critical flex safety for children
+        if p.startswith('min-width:'):
+            # Allow min-width:0 unconditionally to prevent overflow in flex rows
+            val = p.split(':', 1)[1].strip()
+            if val.startswith('0'):
+                return True
+            return (not SUPPRESS_CONTAINER_WIDTH)
+        if p.startswith('width:'):
+            # Allow width:auto even when container widths are suppressed
+            val = p.split(':', 1)[1].strip()
+            if val.startswith('auto'):
+                return True
+            return (not SUPPRESS_CONTAINER_WIDTH)
+        # Permit vertical margins to preserve inferred spacing for non Auto Layout parents
+        if p.startswith('margin-top:') or p.startswith('margin-bottom:'):
+            return True
         if (
             p.startswith('display:') or p.startswith('flex-') or p.startswith('justify-') or p.startswith('align-') or
             p.startswith('gap:') or p.startswith('padding') or p.startswith('overflow:') or
-            (p.startswith('width:') and not SUPPRESS_CONTAINER_WIDTH) or
-            (p.startswith('min-width:') and not SUPPRESS_CONTAINER_WIDTH) or
             p.startswith('max-width:') or
             p.startswith('height:') or p.startswith('min-height:') or p.startswith('max-height:') or
             p.startswith('transform:') or p.startswith('transform-origin')
@@ -5508,24 +5632,105 @@ if SP_FRAME_NODE_ID:
                 f.write(sp_css_full)
 
             # --- Optional Single DOM output (PC DOM only; SP CSS under media query) ---
+            # In SINGLE_DOM mode we emit a single HTML (PC sections only) and a CSS bundle where:
+            # - PC core styles are emitted
+            # - SP core styles are wrapped in @media and SELECTORS ARE REWRITTEN from .n-* to alias classes
+            #   so that a single HTML (PC DOM) can respond to SP breakpoints using shared aliases.
+            def _rewrite_n_to_alias(css_text: str) -> str:
+                try:
+                    if not css_text:
+                        return css_text
+                    # Build map: safe_id -> alias (only those that exist)
+                    amap = NODE_ALIAS_CANDIDATE if isinstance(NODE_ALIAS_CANDIDATE, dict) else {}
+                    if not amap:
+                        return css_text
+                    import re as _re
+
+                    def replace_selectors_in_rules(text: str) -> str:
+                        # Rewrite per rule only if the body does NOT contain a text color declaration
+                        def repl(m: '_re.Match') -> str:
+                            sel = (m.group(2) or '').strip()
+                            body = (m.group(3) or '').strip()
+                            if not sel:
+                                return m.group(0)
+                            # Skip rules that set text color to prevent alias color bleed
+                            if _re.search(r"(^|;)\s*color\s*:\s*[^;]+", body, _re.I):
+                                return m.group(0)
+                            # Skip spacing rules (margin/padding) for non-structural aliases to avoid spacing bleed
+                            if _re.search(r"(^|;|\{)\s*(margin|padding)(-[a-z]+)?\s*:\s*[^;]+", body, _re.I):
+                                return m.group(0)
+                            def rep_where(ms: '_re.Match') -> str:
+                                sid = ms.group(1)
+                                al = amap.get(sid)
+                                return f'.{al}' if al else ms.group(0)
+                            def rep_plain(ms: '_re.Match') -> str:
+                                sid = ms.group(1)
+                                al = amap.get(sid)
+                                return f'.{al}' if al else ms.group(0)
+                            new_sel = _re.sub(r":where\(\.n-([a-zA-Z0-9_-]+)\)", rep_where, sel)
+                            new_sel = _re.sub(r"(?<![a-zA-Z0-9_-])\.n-([a-zA-Z0-9_-]+)(?![a-zA-Z0-9_-])", rep_plain, new_sel)
+                            return m.group(1) + new_sel + '{' + body + '}'
+
+                        # Handle @media blocks by rewriting their bodies recursively
+                        def process_media_blocks(s: str) -> str:
+                            out = []
+                            i = 0
+                            n = len(s)
+                            while i < n:
+                                m = _re.search(r"@media[^\{]+\{", s[i:])
+                                if not m:
+                                    chunk = s[i:]
+                                    out.append(_re.sub(r"(^|\n)\s*([^@\n][^{]+?)\s*\{([^}]*)\}", repl, chunk))
+                                    break
+                                start = i + m.start()
+                                header_end = i + m.end()
+                                # process prefix chunk
+                                prefix = s[i:start]
+                                out.append(_re.sub(r"(^|\n)\s*([^@\n][^{]+?)\s*\{([^}]*)\}", repl, prefix))
+                                # find matching closing brace for media
+                                depth = 1
+                                j = header_end
+                                while j < n and depth > 0:
+                                    if s[j] == '{':
+                                        depth += 1
+                                    elif s[j] == '}':
+                                        depth -= 1
+                                    j += 1
+                                body = s[header_end:j-1]
+                                processed = process_media_blocks(body)
+                                out.append(s[start:header_end] + processed + '}')
+                                i = j
+                            return ''.join(out)
+
+                        return process_media_blocks(text)
+
+                    return replace_selectors_in_rules(css_text)
+                except Exception:
+                    return css_text
             if SINGLE_DOM:
                 try:
                     single_dir = os.path.join(combined_dir, "single")
                     os.makedirs(single_dir, exist_ok=True)
 
-                    # HTML: PC sections only
+                    # HTML: PC sections only (single DOM)
                     single_html = f'''<!DOCTYPE html>\n<html lang="ja">\n<head>\n    <meta charset="UTF-8">\n    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n    <title>{PC_LAYOUT_STRUCTURE["project_name"]}</title>\n    <link rel="stylesheet" href="style-common.css">\n    <link rel="stylesheet" href="style.css">\n</head>\n<body>\n{pc_sections_html}\n</body>\n</html>'''
-                    with open(os.path.join(single_dir, "index.html"), "w", encoding="utf-8") as f:
+                    # Write to single/ and also promote to combined root so index.html is single DOM
+                    single_index_path = os.path.join(single_dir, "index.html")
+                    with open(single_index_path, "w", encoding="utf-8") as f:
                         f.write(single_html)
 
                     # CSS: PC core + SP core inside media query + minimal overrides
                     try:
                         pc_css_core_sd = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
+                        # Rewrite PC .n-* to alias as well so HTML alias tokens respond uniformly
+                        pc_css_core_sd = _rewrite_n_to_alias(pc_css_core_sd)
                     except Exception as e:
                         print(f"[WARN] SINGLE_DOM PC CSS generation failed: {e}")
                         pc_css_core_sd = ""
                     try:
                         sp_css_core_sd = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
+                        # Rewrite SP .n-* to alias so the single HTML (PC DOM) can use shared aliases under media
+                        sp_css_core_sd = _rewrite_n_to_alias(sp_css_core_sd)
                     except Exception as e:
                         print(f"[WARN] SINGLE_DOM SP CSS generation failed: {e}")
                         sp_css_core_sd = ""
@@ -5545,7 +5750,8 @@ if SP_FRAME_NODE_ID:
                         ("\n/* SP styles (as media query) */\n@media (max-width: 768px) {\n" + "\n".join([("  " + ln) for ln in sp_css_core_sd.splitlines()]) + "\n}\n" if sp_css_core_sd else "") +
                         "\n" + overrides
                     )
-                    with open(os.path.join(single_dir, "style.css"), "w", encoding="utf-8") as f:
+                    single_css_path = os.path.join(single_dir, "style.css")
+                    with open(single_css_path, "w", encoding="utf-8") as f:
                         f.write(single_css)
 
                     # Copy style-common.css if present
@@ -5580,6 +5786,20 @@ if SP_FRAME_NODE_ID:
                                     shutil.copy2(s, d)
                     except Exception as e:
                         print(f"[WARN] SINGLE_DOM images copy failed: {e}")
+                    # Promote single DOM artifacts to combined root (overwrite 2DOM index/style)
+                    try:
+                        import shutil
+                        shutil.copy2(single_index_path, os.path.join(combined_dir, "index.html"))
+                        shutil.copy2(single_css_path, os.path.join(combined_dir, "style.css"))
+                        # Ensure style-common.css exists at root
+                        common_css_root = os.path.join(combined_dir, "style-common.css")
+                        if not os.path.exists(common_css_root):
+                            # copy from single or write minimal fallback
+                            sc_single = os.path.join(single_dir, "style-common.css")
+                            if os.path.exists(sc_single):
+                                shutil.copy2(sc_single, common_css_root)
+                    except Exception as e:
+                        print(f"[WARN] SINGLE_DOM root promote failed: {e}")
                 except Exception as e:
                     print(f"[WARN] SINGLE_DOM output failed: {e}")
 
@@ -5646,8 +5866,10 @@ if SINGLE_HTML:
             section_data = SP_SECTIONS[i] if i < len(SP_SECTIONS) else {}
             sp_sections_html += generate_html_for_section(section_data, SP_LAYOUT_STRUCTURE["wrapper_width"]) + "\n"
 
-    # Combined HTML (single DOM PC if DEVICE_MODE=pc or SP is absent)
-    if (DEVICE_MODE == 'pc') or (not have_sp):
+    # Combined HTML/CSS writing (skip when SINGLE_DOM: already promoted single DOM to root)
+    if SINGLE_DOM:
+        pass
+    elif (DEVICE_MODE == 'pc') or (not have_sp):
         combined_html = f'''<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -5680,19 +5902,20 @@ if SINGLE_HTML:
 </body>
 </html>'''
 
-    combined_html_file = os.path.join(combined_dir, "index.html")
-    combined_css_file = os.path.join(combined_dir, "style.css")
-    # Write HTML first
-    with open(combined_html_file, "w", encoding="utf-8") as f:
-        f.write(combined_html)
-    # Build CSS with failsafe
-    try:
-        pc_css = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
-        sp_css = ""
-        if have_sp:
-            sp_css_raw = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
-            sp_css = "\n".join(["    " + line if line.strip() else line for line in sp_css_raw.splitlines()])
-        combined_css = (
+    if not SINGLE_DOM:
+        combined_html_file = os.path.join(combined_dir, "index.html")
+        combined_css_file = os.path.join(combined_dir, "style.css")
+        # Write HTML first
+        with open(combined_html_file, "w", encoding="utf-8") as f:
+            f.write(combined_html)
+        # Build CSS with failsafe
+        try:
+            pc_css = generate_css(PC_LAYOUT_STRUCTURE, PC_COLLECTED_TEXT_STYLES, PC_NODE_STYLES)
+            sp_css = ""
+            if have_sp:
+                sp_css_raw = generate_css(SP_LAYOUT_STRUCTURE, SP_COLLECTED_TEXT_STYLES, SP_NODE_STYLES)
+                sp_css = "\n".join(["    " + line if line.strip() else line for line in sp_css_raw.splitlines()])
+            combined_css = (
             "/* Device visibility */\n"
             ".device-pc { display: block; }\n"
             ".device-sp { display: none; }\n\n"
@@ -5718,30 +5941,30 @@ if SINGLE_HTML:
             "  .device-sp img { max-width: 100% !important; width: 100% !important; height: auto !important; display: block; }\n"
             "  .device-sp [class^=\"n-\"], .device-sp [class*=\" n-\"] { height: auto !important; min-height: 0 !important; }\n"
             "}\n"
-        )
-    except Exception as e:
-        print(f"[WARN] CSS generation (combined) failed: {e}")
-        combined_css = (
+            )
+        except Exception as e:
+            print(f"[WARN] CSS generation (combined) failed: {e}")
+            combined_css = (
             "/* Fallback CSS */\n"
             "html, body { margin:0; padding:0; overflow-x:hidden; }\n"
             ".device-pc { display:block; } .device-sp { display:none; }\n"
             "@media (max-width:768px){ .device-pc{display:none;} .device-sp{display:block;} }\n"
             "img { max-width:100%; height:auto; display:block; }\n"
-        )
-    with open(combined_css_file, "w", encoding="utf-8") as f:
-        f.write(combined_css)
-    # Optional prune
-    if PRUNE_UNUSED_CSS:
-        try:
-            pruned_path = os.path.join(combined_dir, "style.css")
-            if prune_unused_css(combined_html_file, combined_css_file, pruned_path):
-                print(f"[LOG] Combined CSS pruned -> {pruned_path}")
-            else:
-                print("[LOG] CSS prune skipped or failed; keeping original")
-        except Exception as e:
-            print(f"[WARN] CSS prune error: {e}")
-    print(f"[LOG] Combined HTML saved: {combined_html_file}")
-    print(f"[LOG] Combined CSS saved: {combined_css_file}")
+            )
+        with open(combined_css_file, "w", encoding="utf-8") as f:
+            f.write(combined_css)
+        # Optional prune
+        if PRUNE_UNUSED_CSS:
+            try:
+                pruned_path = os.path.join(combined_dir, "style.css")
+                if prune_unused_css(combined_html_file, combined_css_file, pruned_path):
+                    print(f"[LOG] Combined CSS pruned -> {pruned_path}")
+                else:
+                    print("[LOG] CSS prune skipped or failed; keeping original")
+            except Exception as e:
+                print(f"[WARN] CSS prune error: {e}")
+        print(f"[LOG] Combined HTML saved: {combined_html_file}")
+        print(f"[LOG] Combined CSS saved: {combined_css_file}")
     # Write validation report
     try:
         build_node_style_report(combined_dir)

@@ -1,0 +1,6 @@
+:root{--maxw:1200px;}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{margin:0;background:#fff;color:#1A1A1A;font-family:'Noto Sans JP', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;}
+.about{max-width:var(--maxw);margin:0 auto;padding:16px;}
+.breadcrumbs__item{color:#666;}

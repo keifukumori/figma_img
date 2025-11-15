@@ -468,6 +468,8 @@ def inject_link_and_classes(html_path: Path, class_prop_map: dict, covered_props
         html_path.write_text(text, encoding="utf-8")
 
 
+
+
 def add_two_col_role_classes(html_path: Path, backup=False):
     """Add .col-first / .col-second to direct children of .layout-2col containers.
     Heuristic based on first two child opening tags before the matching close at same indent.
@@ -1670,7 +1672,6 @@ def main():
     needed_utils.update(collect_util_tokens_from_html(root))
 
     # Always (re)write style-common.css with baseline rules (eq-cols, responsive, helpers)
-    # We avoid injecting classes to HTML unless --inject-css is set.
     write_style_common(root, needed_utils)
     css_class_map = parse_css_class_props(root / "style.css", set(FLEX_PROPS)) if args.inject_css else {}
 
@@ -1738,6 +1739,8 @@ def main():
         # After sectionizing, add data-mh groups to repeated card-like rows
         for hp in html_files:
             add_data_mh_groups(hp, backup=args.backup)
+
+    # (reverted) no second pass for style-common.css
 
 
 if __name__ == "__main__":

@@ -2,8 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
+
+# Properties we consider "layout" for the purpose of safe drop
+LAYOUT_PROPS = {
+    'display','flex-direction','gap','justify-content','align-items','flex-wrap',
+    'align-self','min-width','min-height','max-width','max-height','width','height',
+    # spacing we partially normalize
+    'padding','padding-top','padding-right','padding-bottom','padding-left',
+    'overflow'
+}
 
 
 def parse_css_class_props(css_text: str) -> dict[str, dict[str, str]]:
@@ -42,6 +52,140 @@ def parse_css_class_props(css_text: str) -> dict[str, dict[str, str]]:
             d = cmap.setdefault(sel[1:], {})
             d.update(kv)
     return cmap
+
+
+def scan_n_class_rules(css_text: str) -> dict[str, dict[str, bool]]:
+    """Scan CSS to determine for each .n-* whether it appears in complex/media selectors
+    and whether any rule body contains non-layout properties.
+    Returns: n_cls -> { 'complex': bool, 'media': bool, 'has_non_layout': bool }
+    """
+    css = re.sub(r"/\*.*?\*/", "", css_text or "", flags=re.S)
+    usage: dict[str, dict[str, bool]] = {}
+    i = 0
+    n = len(css)
+    stack: list[str] = []  # track @media nesting
+    last = 0
+    while i < n:
+        j_open = css.find('{', i)
+        j_close = css.find('}', i)
+        if j_open == -1 and j_close == -1:
+            break
+        if j_close != -1 and (j_open == -1 or j_close < j_open):
+            if stack:
+                stack.pop()
+            i = j_close + 1
+            last = i
+            continue
+        header = css[last:j_open]
+        hdr = header.strip()
+        if hdr.startswith('@'):
+            if hdr.lower().startswith('@media'):
+                stack.append('media')
+            else:
+                stack.append('other')
+        else:
+            # selector rule
+            inside_media = any(s == 'media' for s in stack)
+            # read body
+            k = j_open + 1
+            depth = 1
+            while k < n and depth > 0:
+                if css[k] == '{':
+                    depth += 1
+                elif css[k] == '}':
+                    depth -= 1
+                k += 1
+            body = css[j_open+1:k-1]
+            props = set()
+            for part in body.split(';'):
+                if ':' not in part:
+                    continue
+                key = part.split(':',1)[0].strip().lower()
+                if key:
+                    props.add(key)
+            # find .n-* mentions in header
+            ns = set()
+            for m in re.finditer(r"\.n-([a-zA-Z0-9_-]+)", hdr):
+                ns.add('n-' + m.group(1))
+            for m in re.finditer(r":where\(\.(n-[a-zA-Z0-9_-]+)\)", hdr):
+                ns.add(m.group(1))
+            if ns:
+                sels = [s.strip() for s in hdr.split(',') if s.strip()]
+                for ncls in ns:
+                    info = usage.setdefault(ncls, {'complex': False, 'media': False, 'has_non_layout': False})
+                    if inside_media:
+                        info['media'] = True
+                    # complexity: any selector that mentions ncls but is not exactly ".ncls" or ":where(.ncls)"
+                    for s in sels:
+                        if ('.' + ncls) in s or (f':where(.{ncls})' in s):
+                            simple_ok = (s == ('.' + ncls)) or (s == (f':where(.{ncls})'))
+                            if not simple_ok:
+                                info['complex'] = True
+                                break
+                    # non-layout detection
+                    if any((p not in LAYOUT_PROPS) for p in props):
+                        info['has_non_layout'] = True
+        i = j_open + 1
+        last = i
+    return usage
+
+
+def analyze_css_usage(css_text: str) -> dict[str, dict[str, bool]]:
+    """Analyze how .n-* classes are used in CSS selectors.
+    Returns map: n_cls -> {'complex': bool, 'media': bool}
+    - complex: used in a selector that is not exactly '.n-xxx' or ':where(.n-xxx)'
+    - media: appears inside any @media block
+    Conservative parsing; aims for safety over completeness.
+    """
+    # strip comments
+    css = re.sub(r"/\*.*?\*/", "", css_text or "", flags=re.S)
+    usage: dict[str, dict[str, bool]] = {}
+
+    i = 0
+    n = len(css)
+    stack: list[str] = []  # values: 'media' | 'other'
+    last = 0
+    while i < n:
+        j_open = css.find('{', i)
+        j_close = css.find('}', i)
+        if j_open == -1 and j_close == -1:
+            break
+        if j_close != -1 and (j_open == -1 or j_close < j_open):
+            # close current block
+            if stack:
+                stack.pop()
+            i = j_close + 1
+            last = i
+            continue
+        # found an opening brace
+        header = css[last:j_open]
+        hdr = header.strip()
+        if hdr.startswith('@'):
+            if hdr.lower().startswith('@media'):
+                stack.append('media')
+            else:
+                stack.append('other')
+        else:
+            # selector header
+            inside_media = any(s == 'media' for s in stack)
+            # find any .n- tokens in header
+            for m in re.finditer(r"\.n-([a-zA-Z0-9_-]+)", hdr):
+                ncls = 'n-' + m.group(1)
+                info = usage.setdefault(ncls, {'complex': False, 'media': False})
+                if inside_media:
+                    info['media'] = True
+                # check complexity per selector in list
+                sels = [s.strip() for s in hdr.split(',') if s.strip()]
+                for s in sels:
+                    if f'.{ncls}' not in s and f':where(.{ncls})' not in s:
+                        continue
+                    simple_ok = (s == f'.{ncls}') or (s == f':where(.{ncls})')
+                    if not simple_ok:
+                        info['complex'] = True
+                        break
+        i = j_open + 1
+        last = i
+    return usage
 
 
 def coverage_from_tokens(tokens: list[str]) -> dict[str, str | tuple[str, str, str, str]]:
@@ -164,6 +308,9 @@ def main():
     ap = argparse.ArgumentParser(description='Drop n-* classes from HTML when all their CSS props are covered by utilities/tokens present on the element')
     ap.add_argument('--root', required=True)
     ap.add_argument('--backup', action='store_true')
+    ap.add_argument('--allow-media-layout', action='store_true', help='Allow drop even if used inside @media when all rules are layout-only')
+    ap.add_argument('--allow-complex-layout', action='store_true', help='Allow drop even if used in complex selectors when all rules are layout-only')
+    ap.add_argument('--strict', action='store_true', help='Only drop when .n-* is not used in complex/media selectors (safe mode)')
     args = ap.parse_args()
 
     root = Path(args.root)
@@ -179,8 +326,14 @@ def main():
             d = cmap.setdefault(k, {})
             d.update(v)
 
-    tag_re = re.compile(r"<(div|section|nav|ul|li|header|footer|article)([^>]*)>", re.I)
+    tag_re = re.compile(r"<([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>", re.I)
     class_re = re.compile(r'class=\"([^\"]+)\"')
+
+    # Strict usage analysis
+    usage_map = {}
+    if args.strict:
+        # Use enhanced scan that also marks non-layout presence
+        usage_map = scan_n_class_rules(css_text + "\n" + common_text)
 
     files_changed = 0
     removed_total = 0
@@ -220,10 +373,24 @@ def main():
                 cov['box-shadow'] = '*'
             to_remove = []
             for c in classes:
-                if c.startswith('n-'):
-                    kv = cmap.get(c)
-                    if kv and covered_all(kv, cov):
-                        to_remove.append(c)
+                if not c.startswith('n-'):
+                    continue
+                # Strict mode: ensure safe usage
+                if args.strict:
+                    info = usage_map.get(c) or {'complex': True, 'media': True, 'has_non_layout': True}
+                    complex_block = info.get('complex')
+                    media_block = info.get('media')
+                    # Relax blocks if only layout props are used and flags allow
+                    if not info.get('has_non_layout', True):
+                        if args.allow_complex_layout:
+                            complex_block = False
+                        if args.allow_media_layout:
+                            media_block = False
+                    if complex_block or media_block:
+                        continue
+                kv = cmap.get(c)
+                if kv and covered_all(kv, cov):
+                    to_remove.append(c)
             if not to_remove:
                 continue
             kept = [c for c in classes if c not in to_remove]

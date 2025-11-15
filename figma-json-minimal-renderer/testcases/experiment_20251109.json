@@ -1,0 +1,213 @@
+{
+  "frame": {
+    "name": "Experiment",
+    "id": "test:root",
+    "type": "FRAME",
+    "children": [
+      {
+        "name": "Frame",
+        "nodeId": "7291:125594",
+        "type": "FRAME",
+        "roleHint": "group",
+        "autoLayout": {
+          "layoutMode": "HORIZONTAL",
+          "primaryAxisSizingMode": "FIXED",
+          "counterAxisSizingMode": null,
+          "primaryAxisAlignItems": null,
+          "counterAxisAlignItems": null,
+          "itemSpacing": 40.0,
+          "padding": { "top": null, "right": null, "bottom": null, "left": null }
+        },
+        "children": [
+          {
+            "name": "Image",
+            "nodeId": "7291:125595",
+            "type": "RECTANGLE",
+            "roleHint": "decoration",
+            "decorative": true,
+            "autoLayout": {
+              "layoutMode": null,
+              "primaryAxisSizingMode": null,
+              "counterAxisSizingMode": null,
+              "primaryAxisAlignItems": null,
+              "counterAxisAlignItems": null,
+              "itemSpacing": null,
+              "padding": { "top": null, "right": null, "bottom": null, "left": null }
+            }
+          },
+          {
+            "name": "Frame",
+            "nodeId": "7291:125596",
+            "type": "FRAME",
+            "roleHint": "group",
+            "autoLayout": {
+              "layoutMode": "VERTICAL",
+              "primaryAxisSizingMode": null,
+              "counterAxisSizingMode": "FIXED",
+              "primaryAxisAlignItems": null,
+              "counterAxisAlignItems": null,
+              "itemSpacing": 24.0,
+              "padding": { "top": null, "right": null, "bottom": null, "left": null }
+            },
+            "children": [
+              {
+                "name": "お客様に「安心」して通っていただけるよう、 常にスタッフの教育を行なっております。",
+                "nodeId": "7291:125597",
+                "type": "TEXT",
+                "roleHint": "text",
+                "autoLayout": {
+                  "layoutMode": null,
+                  "primaryAxisSizingMode": null,
+                  "counterAxisSizingMode": null,
+                  "primaryAxisAlignItems": null,
+                  "counterAxisAlignItems": null,
+                  "itemSpacing": null,
+                  "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                },
+                "fills": [ { "token": "token.color.04", "value": { "hex": "#212121", "opacity": 1 } } ],
+                "textStyle": { "value": { "fontFamily": "Noto Sans JP", "fontWeight": 600, "fontSize": 20.0, "lineHeightPx": 32.0, "letterSpacing": 0.0 } }
+              },
+              {
+                "name": "Frame 627294",
+                "nodeId": "7291:125598",
+                "type": "FRAME",
+                "roleHint": "group",
+                "autoLayout": {
+                  "layoutMode": "VERTICAL",
+                  "primaryAxisSizingMode": null,
+                  "counterAxisSizingMode": null,
+                  "primaryAxisAlignItems": null,
+                  "counterAxisAlignItems": null,
+                  "itemSpacing": 6.0,
+                  "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                },
+                "children": [
+                  {
+                    "name": "Frame 627292",
+                    "nodeId": "7291:125599",
+                    "type": "FRAME",
+                    "roleHint": "group",
+                    "autoLayout": {
+                      "layoutMode": "VERTICAL",
+                      "primaryAxisSizingMode": null,
+                      "counterAxisSizingMode": null,
+                      "primaryAxisAlignItems": "CENTER",
+                      "counterAxisAlignItems": "CENTER",
+                      "itemSpacing": -10.0,
+                      "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                    },
+                    "children": [
+                      {
+                        "name": "Rectangle 1",
+                        "nodeId": "7291:125600",
+                        "type": "RECTANGLE",
+                        "roleHint": "decoration",
+                        "decorative": true,
+                        "autoLayout": {
+                          "layoutMode": null,
+                          "primaryAxisSizingMode": null,
+                          "counterAxisSizingMode": null,
+                          "primaryAxisAlignItems": null,
+                          "counterAxisAlignItems": null,
+                          "itemSpacing": null,
+                          "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                        },
+                        "fills": [ { "token": "token.color.05", "value": { "hex": "#F8F3ED", "opacity": 1 } } ]
+                      },
+                      {
+                        "name": "お客様に「安心」して通っていただけるよう、",
+                        "nodeId": "7291:125601",
+                        "type": "TEXT",
+                        "roleHint": "text",
+                        "autoLayout": {
+                          "layoutMode": null,
+                          "primaryAxisSizingMode": null,
+                          "counterAxisSizingMode": null,
+                          "primaryAxisAlignItems": null,
+                          "counterAxisAlignItems": null,
+                          "itemSpacing": null,
+                          "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                        },
+                        "fills": [ { "token": "token.color.04", "value": { "hex": "#212121", "opacity": 1 } } ],
+                        "textStyle": { "value": { "fontFamily": "Noto Sans JP", "fontWeight": 600, "fontSize": 20.0, "lineHeightPx": 32.0, "letterSpacing": 0.0 } }
+                      }
+                    ]
+                  },
+                  {
+                    "name": "Frame 627293",
+                    "nodeId": "7291:125602",
+                    "type": "FRAME",
+                    "roleHint": "group",
+                    "autoLayout": {
+                      "layoutMode": "VERTICAL",
+                      "primaryAxisSizingMode": null,
+                      "counterAxisSizingMode": null,
+                      "primaryAxisAlignItems": "CENTER",
+                      "counterAxisAlignItems": "CENTER",
+                      "itemSpacing": -10.0,
+                      "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                    },
+                    "children": [
+                      {
+                        "name": "Rectangle 1",
+                        "nodeId": "7291:125603",
+                        "type": "RECTANGLE",
+                        "roleHint": "decoration",
+                        "decorative": true,
+                        "autoLayout": {
+                          "layoutMode": null,
+                          "primaryAxisSizingMode": null,
+                          "counterAxisSizingMode": null,
+                          "primaryAxisAlignItems": null,
+                          "counterAxisAlignItems": null,
+                          "itemSpacing": null,
+                          "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                        },
+                        "fills": [ { "token": "token.color.05", "value": { "hex": "#F8F3ED", "opacity": 1 } } ]
+                      },
+                      {
+                        "name": "常にスタッフの教育を行なっています。",
+                        "nodeId": "7291:125604",
+                        "type": "TEXT",
+                        "roleHint": "text",
+                        "autoLayout": {
+                          "layoutMode": null,
+                          "primaryAxisSizingMode": null,
+                          "counterAxisSizingMode": null,
+                          "primaryAxisAlignItems": null,
+                          "counterAxisAlignItems": null,
+                          "itemSpacing": null,
+                          "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                        },
+                        "fills": [ { "token": "token.color.04", "value": { "hex": "#212121", "opacity": 1 } } ],
+                        "textStyle": { "value": { "fontFamily": "Noto Sans JP", "fontWeight": 600, "fontSize": 20.0, "lineHeightPx": 32.0, "letterSpacing": 0.0 } }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "MEN'S TBCでは自社の教育、研修制度だけではなく、AEA認定エステティシャン資格・CPE・認定美容脱毛エステティシャン資格等、さまざまな美容関連の資格及び公的資格等の取得を奨励しています。",
+                "nodeId": "7291:125605",
+                "type": "TEXT",
+                "roleHint": "text",
+                "autoLayout": {
+                  "layoutMode": null,
+                  "primaryAxisSizingMode": null,
+                  "counterAxisSizingMode": null,
+                  "primaryAxisAlignItems": null,
+                  "counterAxisAlignItems": null,
+                  "itemSpacing": null,
+                  "padding": { "top": null, "right": null, "bottom": null, "left": null }
+                },
+                "fills": [ { "token": "token.color.04", "value": { "hex": "#212121", "opacity": 1 } } ],
+                "textStyle": { "value": { "fontFamily": "Noto Sans JP", "fontWeight": 400, "fontSize": 16.0, "lineHeightPx": 25.600000381469727, "letterSpacing": 0.0 } }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+

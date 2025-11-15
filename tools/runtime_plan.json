@@ -1,0 +1,37 @@
+{
+  "core": [
+    "figma_02_build_from_json.py",
+    "fetch_figma_layout.py"
+  ],
+  "pipeline": [
+    "tools/pipeline/postprocess_dedupe.py",
+    "tools/pipeline/annotate_generic_components.py"
+  ],
+  "ops": [
+    "tools/ops/assign_section_keys.py",
+    "tools/ops/add_section_row_alias.py",
+    "tools/ops/add_section_card_alias.py",
+    "tools/ops/ensure_style_link_order.py",
+    "tools/ops/mirror_n_selectors_to_alias.py",
+    "tools/ops/alias_graft_for_residual_n.py",
+    "tools/ops/drop_n_if_covered.py",
+    "tools/ops/prune_unused_n_css_rules.py",
+    "tools/ops/canonicalize_bem.py"
+  ],
+  "reports": [
+    "tools/report_n_drop_blockers.py"
+  ],
+  "settings": {
+    "SINGLE_DOM": true,
+    "TEXT_TOKEN_MODE": "section_local",
+    "N_NODE_VISUAL_ONLY": true,
+    "SECTION_WRAPPER_MODE": "full",
+    "FLATTEN_SHALLOW_WRAPPERS": false
+  },
+  "outputs": {
+    "project_name": "TBCグループ株式会社様_Design",
+    "output_root": "figma_images/TBC-_Design",
+    "canonical_index_html": null,
+    "all_html": []
+  }
+}

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project</title>
+    <style>
+*{box-sizing:border-box}
+img{max-width:100%;height:auto;display:block}
+.img-cover{width:100%;height:100%;object-fit:cover;display:block}
+.c-staff-education__bg, .c-staff-education__image{
+    flex:0 0 40%;
+    max-width:40%
+}
+.c-staff-education, .c-staff-education__content{
+    flex:1 1 0;
+    min-width:0
+}
+.c-staff-education, .c-staff-education__content{
+    display:flex;
+    flex-direction:column;
+    gap:24px
+}
+.c-staff-education__headline{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px;
+    color:#212121
+}
+.c-staff-education__phrases{
+    display:flex;
+    flex-direction:column;
+    gap:6px
+}
+.c-staff-education__phrase{
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    text-align:center
+}
+.c-staff-education__bg{
+    width:100%;
+    height:40px;
+    position:absolute;
+    top:50%;
+    left:0;
+    transform:translateY(-50%);
+    z-index:0
+}
+.c-staff-education__text{
+    position:relative;
+    z-index:1;
+    margin:0
+}
+.c-staff-education__bg{
+    background-color:#F8F3ED
+}
+.c-staff-education__text{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px
+}
+.c-staff-education__bg{
+    background-color:#F8F3ED
+}
+.c-staff-education__text{
+    font-size:20px;
+    font-weight:600;
+    line-height:32.0px
+}
+.c-staff-education__text{
+    font-size:16px;
+    font-weight:400;
+    line-height:25.6px;
+    color:#212121
+}
+    </style>
+  </head>
+  <body>
+<div class="frame">
+<div class="c-staff-education__image c-staff-education__bg">
+<img class="img-cover" src="path/to/image.jpg" alt="Image" />
+</div>
+<section class="c-staff-education c-staff-education__content">
+<h2 class="c-staff-education__headline"></h2>
+<div class="frame-627294">
+<div class="c-staff-education__phrases">
+<div class="c-staff-education__phrase">
+  <div class="c-staff-education__bg"></div>
+  <p class="c-staff-education__text"></p>
+</div>
+<div class="c-staff-education__phrase">
+  <div class="c-staff-education__bg"></div>
+  <p class="c-staff-education__text"></p>
+</div>
+</div>
+</div>
+<p class="c-staff-education__text"></p>
+</section>
+</div>
+  </body>
+</html>
