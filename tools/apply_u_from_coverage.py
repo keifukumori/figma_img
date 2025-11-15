@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 
+# Include padding so we can inject spacing utilities for instances that still
+# depend on .n-* for internal spacing. This is safe because we only annotate
+# the specific elements that currently carry the corresponding n-* token.
 SAFE_PROPS = {
     'display', 'flex-direction', 'gap', 'justify-content', 'align-items', 'flex-wrap',
-    'align-self', 'min-width', 'width'
+    'align-self', 'min-width', 'width', 'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'
 }
 
 
@@ -158,4 +161,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

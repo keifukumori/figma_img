@@ -14,6 +14,8 @@ SAFE_PROPS_LAYOUT = {
     'align-self', 'min-width', 'max-width',
     # widthは保守的に扱う（100%は許容、それ以外は未カバー扱いに倒す）
     'width',
+    # Spacing: allow padding to be externalized as utilities for safe drop
+    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
 }
 SAFE_PROPS_TYPO = {
     'font-size', 'font-weight', 'line-height', 'letter-spacing', 'text-align'

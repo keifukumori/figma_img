@@ -1,5 +1,36 @@
 # Figma → HTML/CSS ジェネレータ 安定化メモ（Auto Layout と n- 移行）
 
+## このプログラムは何か（全体像）
+
+- 目的: Figma のデザインから、静的な HTML/CSS を規則的に自動生成します。生成物は“人が保守しやすい構造”（レイアウト=ユーティリティ、タイポ=トークン、共通見た目=別名/BEM、例外のみ .n-*）に寄せます。
+- 2 段階ワークフロー（推奨）
+  1) 取得: Figma API から JSON を保存（`figma_01_fetch_json.py`、任意）
+  2) 生成: 保存 JSON から HTML/CSS を生成（`figma_02_build_from_json.py` → `fetch_figma_layout.py`）
+- 完全オフライン生成可: `.env` に `INPUT_JSON_FILE` と `FRAME_NODE_ID` があれば API なしで生成できます。
+- ポスト処理: 生成後にパイプライン/OPSでユーティリティ注入、alias 付与、`.n-*` 削減、未使用CSS剪定などを実行します（.env でON/OFF可能）。
+
+### 実行方法（最短）
+
+```
+pip install -r requirements.txt
+python3 figma_02_build_from_json.py
+```
+
+- `.env` を参照して出力（既定: `figma_images/<Project>/index.html`）。
+- 生成後、`python3 tools/report_runtime_plan.py` でこの環境で使われたコア/パイプライン/OPSと出力パス（canonical_index_html）を JSON 表示。
+
+### 出力の見方
+
+- 正代表 HTML: `figma_images/<Project>/index.html`（`tools/report_runtime_plan.py` の `canonical_index_html`）
+- CSS: `style.css`（個別/alias含む）, `style-common.css`（共通ユーティリティ）
+- レポート類: `n_drop_blockers.json`（`.n-*` 削減の阻害要因）など
+
+### 前提・注意
+
+- 生成物（HTML/CSS）は直接編集しません。ロジック/OPS/設定で一般化します（別デザインでも再現可能にするため）。
+- Figma 側の Auto Layout 設定（`layoutMode`, `itemSpacing`, `primary/counterAxisAlignItems`, `layoutWrap`）は正確な変換に有利です。Auto Layout 未使用・混在だと位置ベース推定の誤差が出ます。
+
+
 このドキュメントは、今回の調整内容と設計方針、変更箇所、今後の運用手順を整理したものです。生成物（HTML/CSS）を直接編集せず、ジェネレータとポスト処理のみで安定・一般化することを前提としています。
 
 ## 目的

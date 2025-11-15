@@ -23,15 +23,29 @@
   ],
   "settings": {
     "SINGLE_DOM": true,
-    "TEXT_TOKEN_MODE": "section_local",
+    "TEXT_TOKEN_MODE": "role",
     "N_NODE_VISUAL_ONLY": true,
     "SECTION_WRAPPER_MODE": "full",
     "FLATTEN_SHALLOW_WRAPPERS": false
   },
   "outputs": {
     "project_name": "TBCグループ株式会社様_Design",
-    "output_root": "figma_images/TBC-_Design",
-    "canonical_index_html": null,
-    "all_html": []
+    "output_root": "figma_images/TBCグループ株式会社様_Design",
+    "canonical_index_html": "figma_images/TBCグループ株式会社様_Design/index.html",
+    "all_html": [
+      "figma_images/TBCグループ株式会社様_Design/index.html",
+      "figma_images/TBCグループ株式会社様_Design/r-2_campaign_pc/index-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-2_campaign_pc/r-2_campaign_pc-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-66_story_pc/index-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-66_story_pc/r-66_story_pc-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_pc/index-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_pc/index.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_pc/r-8_mens_about_pc-pc.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_sp/index-sp.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_sp/index.html",
+      "figma_images/TBCグループ株式会社様_Design/r-8_mens_about_sp/r-8_mens_about_sp-sp.html",
+      "figma_images/TBCグループ株式会社様_Design/single/index.html",
+      "figma_images/TBCグループ株式会社様_Design/single_pc/index.html"
+    ]
   }
 }

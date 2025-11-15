@@ -66,16 +66,37 @@ def detect_project_root(env: dict) -> dict:
                     break
     if not project:
         project = 'Project'
-    root = Path(out_dir) / safe_name(project)
-    # Try to locate canonical index.html
+
+    # Prefer unsanitized project dir if it exists (handles i18n names)
+    raw_root = Path(out_dir) / project
+    san_root = Path(out_dir) / safe_name(project)
+    if raw_root.exists():
+        root = raw_root
+    else:
+        root = san_root
+
+    # Try to locate canonical index.html under chosen root; if not found, scan OUTPUT_DIR broadly
     canonical = None
     if (root / 'index.html').exists():
         canonical = str(root / 'index.html')
     else:
-        for base, dirs, files in os.walk(root):
+        for base, dirs, files in os.walk(root if root.exists() else Path(out_dir)):
             if 'index.html' in files and 'style.css' in files:
                 canonical = str(Path(base) / 'index.html')
-                break
+                # prefer a base that looks like our project name if multiple candidates
+                # break on first if scanning under root; otherwise keep searching for better match
+                if root.exists():
+                    break
+        # As a last resort, pick the first subdir in OUTPUT_DIR that has both files
+        if canonical is None:
+            p = Path(out_dir)
+            if p.exists():
+                for sub in sorted(p.iterdir()):
+                    if sub.is_dir() and (sub / 'index.html').exists() and (sub / 'style.css').exists():
+                        root = sub
+                        canonical = str(sub / 'index.html')
+                        break
+
     # Collect additional htmls
     htmls = []
     if root.exists():
@@ -152,4 +173,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
