@@ -771,6 +771,14 @@ def _should_drop_n_for_safe(safe_id: str) -> bool:
             return False
         if not N_CLASS_ALIAS_DROP_N_UNIQUE:
             return False
+        # Keep .n-* on TEXT nodes so that per-node text color/effects remain
+        # available during migration (colors are not propagated to aliases/tokens).
+        try:
+            kind = NODE_KIND_MAP.get(safe_id, None)
+            if kind == 'text':
+                return False
+        except Exception:
+            pass
         alias = NODE_ALIAS_CANDIDATE.get(safe_id)
         if not alias:
             return False
@@ -4024,6 +4032,8 @@ img {{
     letter-spacing: {style_info["letter_spacing"]}px;
     text-align: {style_info["text_align"]};
 '''
+            if style_info.get("color"):
+                css += f"    color: {style_info['color']};\n"
             if style_info.get("text_decoration"):
                 css += f"    text-decoration: {style_info['text_decoration']};\n"
             if style_info.get("text_transform"):
@@ -4075,6 +4085,8 @@ img {{
     letter-spacing: {style_info["letter_spacing"]}px;
     text-align: {style_info["text_align"]};
 '''
+            if style_info.get("color"):
+                css += f"    color: {style_info['color']};\n"
             if style_info.get("text_decoration"):
                 css += f"    text-decoration: {style_info['text_decoration']};\n"
             if style_info.get("text_transform"):
