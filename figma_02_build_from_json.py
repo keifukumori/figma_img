@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--ops-card-alias", action="store_true", help="Ops: add SECTION__card alias to elements with card (env POST_OPS_ADD_SECTION_CARD_ALIAS=true)")
     parser.add_argument("--ops-promote-shadow", action="store_true", help="Ops: promote child n-* shadow to SECTION__row-item (env POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM=true)")
     parser.add_argument("--ops-ensure-style-order", action="store_true", help="Ops: ensure style-common.css is linked after style.css (env POST_OPS_ENSURE_STYLE_ORDER=true)")
+    parser.add_argument("--ops-prune-redundant-classes", action="store_true", help="Ops: prune redundant/empty classes safely (env POST_OPS_PRUNE_REDUNDANT_CLASSES=true)")
     parser.add_argument("--ops-escalate-alias-specificity", action="store_true", help="Ops: duplicate :where(.alias){..} as .alias{..} (env POST_OPS_ESCALATE_ALIAS_SPECIFICITY=true)")
     parser.add_argument("--ops-mirror-n-selectors", action="store_true", help="Ops: mirror .n-* selectors in CSS to section-scoped aliases (env POST_OPS_MIRROR_N_SELECTORS=true)")
     parser.add_argument("--ops-alias-graft", action="store_true", help="Ops: alias graft for residual n-* (append alias to HTML and comma-join CSS) (env POST_OPS_ALIAS_GRAFT=true)")
@@ -63,6 +64,7 @@ def main():
     ops_card_alias = args.ops_card_alias or (os.getenv("POST_OPS_ADD_SECTION_CARD_ALIAS", "false").lower() == "true")
     ops_promote_shadow = args.ops_promote_shadow or (os.getenv("POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM", "false").lower() == "true")
     ops_style_order = args.ops_ensure_style_order or (os.getenv("POST_OPS_ENSURE_STYLE_ORDER", "false").lower() == "true")
+    ops_prune_redundant = args.ops_prune_redundant_classes or (os.getenv("POST_OPS_PRUNE_REDUNDANT_CLASSES", "false").lower() == "true")
     ops_escalate_alias = args.ops_escalate_alias_specificity or (os.getenv("POST_OPS_ESCALATE_ALIAS_SPECIFICITY", "false").lower() == "true")
     ops_mirror_selectors = args.ops_mirror_n_selectors or (os.getenv("POST_OPS_MIRROR_N_SELECTORS", "false").lower() == "true")
     ops_alias_graft = args.ops_alias_graft or (os.getenv("POST_OPS_ALIAS_GRAFT", "false").lower() == "true")
@@ -211,6 +213,14 @@ def main():
                     _subprocess.run(["python3", "tools/ops/ensure_style_link_order.py", "--root", root, *_maybe_backup_arg()], check=False)
                 except Exception as e:
                     print(f"[OPS] ensure_style_link_order failed: {e}")
+
+            # Prune redundant/empty classes (safe): run after style link order so CSS is available
+            if ops_prune_redundant:
+                try:
+                    print(f"[OPS] Prune redundant classes at: {root}")
+                    _subprocess.run(["python3", "tools/ops/prune_redundant_classes.py", "--root", root, "--backup", "--prefer", "generic"], check=False)
+                except Exception as e:
+                    print(f"[OPS] prune_redundant_classes failed: {e}")
 
             if ops_escalate_alias:
                 try:

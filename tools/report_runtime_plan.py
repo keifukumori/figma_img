@@ -146,6 +146,7 @@ def main():
         ('POST_OPS_ADD_SECTION_ROW_ALIAS', 'tools/ops/add_section_row_alias.py'),
         ('POST_OPS_ADD_SECTION_CARD_ALIAS', 'tools/ops/add_section_card_alias.py'),
         ('POST_OPS_ENSURE_STYLE_ORDER', 'tools/ops/ensure_style_link_order.py'),
+        ('POST_OPS_PRUNE_REDUNDANT_CLASSES', 'tools/ops/prune_redundant_classes.py'),
         ('POST_OPS_ESCALATE_ALIAS_SPECIFICITY', 'tools/ops/escalate_alias_specificity.py'),
         ('POST_OPS_MIRROR_N_SELECTORS', 'tools/ops/mirror_n_selectors_to_alias.py'),
         ('POST_OPS_ALIAS_GRAFT', 'tools/ops/alias_graft_for_residual_n.py'),
