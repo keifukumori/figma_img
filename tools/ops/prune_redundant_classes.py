@@ -114,7 +114,9 @@ def main():
     root = Path(args.root)
     css_text = (root / 'style.css').read_text(encoding='utf-8', errors='ignore') if (root/'style.css').exists() else ''
     sc_text = (root / 'style-common.css').read_text(encoding='utf-8', errors='ignore') if (root/'style-common.css').exists() else ''
-    cmap = parse_css_class_props(css_text + "\n" + sc_text)
+    pc_text = (root / 'style-pc.css').read_text(encoding='utf-8', errors='ignore') if (root/'style-pc.css').exists() else ''
+    sp_text = (root / 'style-sp.css').read_text(encoding='utf-8', errors='ignore') if (root/'style-sp.css').exists() else ''
+    cmap = parse_css_class_props("\n".join([css_text, sc_text, pc_text, sp_text]))
 
     tag_re = re.compile(r"<([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>", re.I)
     class_re = re.compile(r'class=\"([^\"]+)\"')
