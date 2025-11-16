@@ -381,6 +381,11 @@ def main():
             for c in classes:
                 if not c.startswith('n-'):
                     continue
+                # Keep .n-* if its CSS includes text color; prevents accidental color changes
+                # when role tokens (t-/typo-) do not exactly match per-node colors.
+                kv_check = cmap.get(c) or {}
+                if any(k.strip().lower() == 'color' for k in kv_check.keys()):
+                    continue
                 # Strict mode: ensure safe usage
                 if args.strict:
                     info = usage_map.get(c) or {'complex': True, 'media': True, 'has_non_layout': True}

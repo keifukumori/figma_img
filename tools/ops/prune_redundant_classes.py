@@ -122,6 +122,15 @@ def main():
     pruned_files = 0
     total_drops = 0
 
+    # Flex dependency guard: tokens that require a flex container to be effective
+    def has_flex_dependents(tokens: List[str]) -> bool:
+        for t in tokens:
+            if t == 'eq-cols':
+                return True
+            if t.startswith(('g-','ai-','jc-','fw-')):
+                return True
+        return False
+
     # Helper to decide pair-specific pruning (card vs SECTION__card)
     def prune_card_pair(classes: List[str]) -> List[str]:
         out = classes[:]
@@ -196,6 +205,11 @@ def main():
             for c in list(classes):
                 # Never prune structural aliases by default (keep __row-item)
                 if c.endswith('__row-item'):
+                    continue
+                # Safety: keep fx-row/fx-col when gap/align/wrap/eq-cols utilities are present.
+                # These tokens depend on display:flex; dropping fx-* can silently disable them
+                # if no other class guarantees flex (and some aliases may have neutralized flex).
+                if c in ('fx-row','fx-col') and has_flex_dependents(classes):
                     continue
                 # Evaluate redundancy
                 kv = cmap.get(c) or {}
