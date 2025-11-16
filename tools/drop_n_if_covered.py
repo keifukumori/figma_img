@@ -264,7 +264,7 @@ def coverage_from_tokens(tokens: list[str]) -> dict[str, str | tuple[str, str, s
     return cov
 
 
-def covered_all(kv: dict[str, str], cov: dict[str, str | tuple[str, str, str, str]]) -> bool:
+def covered_all(kv: dict[str, str], cov: dict[str, str | tuple[str, str, str, str]], ignore_flex: bool = False) -> bool:
     for k, v in kv.items():
         # Ignore commented/neutralized entries captured by naive parsing
         if str(k).strip().startswith('/*'):
@@ -278,7 +278,11 @@ def covered_all(kv: dict[str, str], cov: dict[str, str | tuple[str, str, str, st
         if k in ('align-self','height'):
             continue
         # Flex is commonly redefined by broader aliases later in CSS; consider it covered if any flex present
-        if k == 'flex' and ('flex' in cov):
+        if k == 'flex':
+            if ignore_flex:
+                continue
+            if 'flex' in cov:
+                continue
             continue
         if k == 'justify-content' and v.strip() == 'flex-start':
             continue
@@ -354,6 +358,9 @@ def main():
             classes = cm.group(1).split()
             tokens = classes[:]
             cov = coverage_from_tokens(tokens)
+            # Determine if this element is a text-role element (typo-* or configured prefix)
+            text_role_prefix = os.getenv('TEXT_ROLE_PREFIX', 'typo')
+            has_text_role = any(c.startswith(f'{text_role_prefix}-') for c in classes)
             # Add CSS props of all classes present (alias/BEM等) to coverage
             for c in classes:
                 kv_c = cmap.get(c)
@@ -385,7 +392,10 @@ def main():
                 # when role tokens (t-/typo-) do not exactly match per-node colors.
                 kv_check = cmap.get(c) or {}
                 if any(k.strip().lower() == 'color' for k in kv_check.keys()):
-                    continue
+                    # Allow safe migration only when explicitly enabled via env
+                    allow_color_migration = str(os.getenv('DROP_N_ALLOW_TEXT_COLOR_MIGRATION', 'false')).lower() in ('1','true','yes','on')
+                    if not allow_color_migration:
+                        continue
                 # Strict mode: ensure safe usage
                 if args.strict:
                     info = usage_map.get(c) or {'complex': True, 'media': True, 'has_non_layout': True}
@@ -400,7 +410,7 @@ def main():
                     if complex_block or media_block:
                         continue
                 kv = cmap.get(c)
-                if kv and covered_all(kv, cov):
+                if kv and covered_all(kv, cov, ignore_flex=has_text_role):
                     to_remove.append(c)
             if not to_remove:
                 continue

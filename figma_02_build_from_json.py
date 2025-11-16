@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--ops-card-alias", action="store_true", help="Ops: add SECTION__card alias to elements with card (env POST_OPS_ADD_SECTION_CARD_ALIAS=true)")
     parser.add_argument("--ops-promote-shadow", action="store_true", help="Ops: promote child n-* shadow to SECTION__row-item (env POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM=true)")
     parser.add_argument("--ops-ensure-style-order", action="store_true", help="Ops: ensure style-common.css is linked after style.css (env POST_OPS_ENSURE_STYLE_ORDER=true)")
+    parser.add_argument("--ops-promote-text-color-util", action="store_true", help="Ops: promote common text colors (white) from n-* to utilities (env POST_OPS_PROMOTE_TEXT_COLOR_UTIL=true)")
     parser.add_argument("--ops-prune-redundant-classes", action="store_true", help="Ops: prune redundant/empty classes safely (env POST_OPS_PRUNE_REDUNDANT_CLASSES=true)")
     parser.add_argument("--ops-escalate-alias-specificity", action="store_true", help="Ops: duplicate :where(.alias){..} as .alias{..} (env POST_OPS_ESCALATE_ALIAS_SPECIFICITY=true)")
     parser.add_argument("--ops-mirror-n-selectors", action="store_true", help="Ops: mirror .n-* selectors in CSS to section-scoped aliases (env POST_OPS_MIRROR_N_SELECTORS=true)")
@@ -64,6 +65,7 @@ def main():
     ops_card_alias = args.ops_card_alias or (os.getenv("POST_OPS_ADD_SECTION_CARD_ALIAS", "false").lower() == "true")
     ops_promote_shadow = args.ops_promote_shadow or (os.getenv("POST_OPS_PROMOTE_SHADOW_TO_ROW_ITEM", "false").lower() == "true")
     ops_style_order = args.ops_ensure_style_order or (os.getenv("POST_OPS_ENSURE_STYLE_ORDER", "false").lower() == "true")
+    ops_promote_text_color = args.ops_promote_text_color_util or (os.getenv("POST_OPS_PROMOTE_TEXT_COLOR_UTIL", "false").lower() == "true")
     ops_prune_redundant = args.ops_prune_redundant_classes or (os.getenv("POST_OPS_PRUNE_REDUNDANT_CLASSES", "false").lower() == "true")
     ops_escalate_alias = args.ops_escalate_alias_specificity or (os.getenv("POST_OPS_ESCALATE_ALIAS_SPECIFICITY", "false").lower() == "true")
     ops_mirror_selectors = args.ops_mirror_n_selectors or (os.getenv("POST_OPS_MIRROR_N_SELECTORS", "false").lower() == "true")
@@ -213,6 +215,13 @@ def main():
                     _subprocess.run(["python3", "tools/ops/ensure_style_link_order.py", "--root", root, *_maybe_backup_arg()], check=False)
                 except Exception as e:
                     print(f"[OPS] ensure_style_link_order failed: {e}")
+
+            if ops_promote_text_color:
+                try:
+                    print(f"[OPS] Promote text color to utility at: {root}")
+                    _subprocess.run(["python3", "tools/ops/promote_text_color_to_util.py", "--root", root, *_maybe_backup_arg()], check=False)
+                except Exception as e:
+                    print(f"[OPS] promote_text_color_to_util failed: {e}")
 
             # Prune redundant/empty classes (safe): run after style link order so CSS is available
             if ops_prune_redundant:
