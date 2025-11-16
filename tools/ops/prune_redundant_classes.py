@@ -219,6 +219,10 @@ def main():
                         # Allow pruning of empty SECTION__card when card present handled above
                         if c.endswith('__card'):
                             drops.append(c)
+                        # Drop empty BEM aliases (section__*) that have no CSS attached,
+                        # except for structural aliases we intentionally keep.
+                        elif ('__' in c) and not (c.endswith('__row') or c.endswith('__row-item') or c.endswith('__card')):
+                            drops.append(c)
                     continue
                 cov = build_cov(classes, exclude=c)
                 if covered_all(kv, cov):
