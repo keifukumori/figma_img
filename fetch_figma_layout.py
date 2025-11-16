@@ -50,6 +50,9 @@ INCLUDE_ALLOWLIST_IDS = {s.strip() for s in os.getenv("INCLUDE_ALLOWLIST_IDS", "
 # - TEXT_TOKEN_MODE: off | role | section_local
 TEXT_TOKEN_MODE = (os.getenv("TEXT_TOKEN_MODE", "off") or "off").lower()
 TEXT_ROLE_MODE = (TEXT_TOKEN_MODE == 'role') or (os.getenv("TEXT_ROLE_MODE", "off").lower() in ("on", "true", "1"))
+# Prefix for role-based typography tokens (default: 't').
+# Example: TEXT_ROLE_PREFIX=typo -> 'typo-body', 'typo-heading--h2'
+TEXT_ROLE_PREFIX = (os.getenv("TEXT_ROLE_PREFIX", "t") or "t").strip()
 # Control whether fallback text-size-* classes include color declarations
 FALLBACK_TEXT_CLASS_INCLUDE_COLOR = (os.getenv("FALLBACK_TEXT_CLASS_INCLUDE_COLOR", "true").lower() == "true")
 # Section-local token config (used when TEXT_TOKEN_MODE=section_local)
@@ -2898,7 +2901,7 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
         elif TEXT_ROLE_MODE:
             role_cls = None
             if tag_name and tag_name.startswith('h'):
-                role_cls = f"t-heading--{tag_name}"
+                role_cls = f"{TEXT_ROLE_PREFIX}-heading--{tag_name}"
             else:
                 # body vs note 簡易判定（小さめサイズをノート扱い）
                 try:
@@ -2907,9 +2910,9 @@ def generate_element_html(element, indent="", suppress_leaf_images=False, suppre
                     fs = 0
                 fw = int(style_info.get("font_weight") or 0)
                 if fs <= 12 and fw <= 500:
-                    role_cls = "t-note"
+                    role_cls = f"{TEXT_ROLE_PREFIX}-note"
                 else:
-                    role_cls = "t-body"
+                    role_cls = f"{TEXT_ROLE_PREFIX}-body"
             if role_cls:
                 classes.append(role_cls)
                 # 登録（CSS生成用に保持）
@@ -5097,18 +5100,18 @@ def collect_text_styles_from_element(element, figma_styles=None):
             figma_class = style_info["figma_style_name"].lower().replace(" ", "-").replace("/", "-")
             collected_text_styles[f"figma-style-{figma_class}"] = style_info
         # 役割ベース（t-*）のCSS用に、役割→スタイルの代表値を登録
-        if TEXT_ROLE_MODE:
-            tag = detect_heading_level(element)
-            if tag and tag.startswith('h'):
-                role = f"t-heading--{tag}"
-            else:
-                try:
-                    fs = int(style_info.get("font_size") or 0)
-                except Exception:
-                    fs = 0
-                fw = int(style_info.get("font_weight") or 0)
-                role = "t-note" if (fs <= 12 and fw <= 500) else "t-body"
-            ROLE_TEXT_STYLES.setdefault(role, style_info)
+            if TEXT_ROLE_MODE:
+                tag = detect_heading_level(element)
+                if tag and tag.startswith('h'):
+                    role = f"{TEXT_ROLE_PREFIX}-heading--{tag}"
+                else:
+                    try:
+                        fs = int(style_info.get("font_size") or 0)
+                    except Exception:
+                        fs = 0
+                    fw = int(style_info.get("font_weight") or 0)
+                    role = f"{TEXT_ROLE_PREFIX}-note" if (fs <= 12 and fw <= 500) else f"{TEXT_ROLE_PREFIX}-body"
+                ROLE_TEXT_STYLES.setdefault(role, style_info)
     
     # 子要素も再帰的に処理
     for child in element.get("children", []):
