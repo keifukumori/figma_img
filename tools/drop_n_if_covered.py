@@ -266,6 +266,9 @@ def coverage_from_tokens(tokens: list[str]) -> dict[str, str | tuple[str, str, s
 
 def covered_all(kv: dict[str, str], cov: dict[str, str | tuple[str, str, str, str]]) -> bool:
     for k, v in kv.items():
+        # Ignore commented/neutralized entries captured by naive parsing
+        if str(k).strip().startswith('/*'):
+            continue
         # Treat CSS custom props and unknowns as not covered
         if k.startswith('--'):
             continue
@@ -273,6 +276,9 @@ def covered_all(kv: dict[str, str], cov: dict[str, str | tuple[str, str, str, st
             return False
         # Ignore benign defaults or redundant props under our normalization
         if k in ('align-self','height'):
+            continue
+        # Flex is commonly redefined by broader aliases later in CSS; consider it covered if any flex present
+        if k == 'flex' and ('flex' in cov):
             continue
         if k == 'justify-content' and v.strip() == 'flex-start':
             continue
